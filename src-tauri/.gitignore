@@ -1,0 +1,6 @@
+target
+WixTools
+resources/node
+resources/sidecar
+resources/cli
+gen

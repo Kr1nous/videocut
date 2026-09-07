@@ -1,19 +1,26 @@
 import { useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import type { MediaAsset, SubtitleCue, Timeline, TimelineClip, TimelineOp } from '@shared/types'
-import { clipFx, timelineDurationMs } from '@shared/types'
+import { clipBlend, clipFx, clipKind, timelineDurationMs } from '@shared/types'
+import { sliceWaveform } from '@shared/audio'
+import { overlayLanes } from '@shared/compose'
 import { formatTimecode } from '../lib/format'
 
 const PPS = 64
 const HEIGHT_KEY = 'cut-studio-track-heights'
-const PANEL_KEY = 'cut-studio-timeline-height'
 
-type TrackKey = 'video' | 'overlay' | 'audio' | 'sub'
+type TrackKey = 'video' | 'fx' | 'audio' | 'sub'
 
 function loadHeights(): Record<TrackKey, number> {
   try {
-    return { video: 88, overlay: 28, audio: 40, sub: 40, ...JSON.parse(localStorage.getItem(HEIGHT_KEY) || '{}') }
+    const raw = JSON.parse(localStorage.getItem(HEIGHT_KEY) || '{}') as Partial<Record<TrackKey | 'overlay', number>>
+    return {
+      video: raw.video ?? 88,
+      fx: raw.fx ?? (typeof raw.overlay === 'number' ? Math.max(40, raw.overlay) : 48),
+      audio: raw.audio ?? 52,
+      sub: raw.sub ?? 40
+    }
   } catch {
-    return { video: 88, overlay: 28, audio: 40, sub: 40 }
+    return { video: 88, fx: 48, audio: 52, sub: 40 }
   }
 }
 
@@ -45,10 +52,7 @@ export function TimelineView({
   const laneRef = useRef<HTMLDivElement>(null)
   const [hoverMs, setHoverMs] = useState<number | null>(null)
   const [heights, setHeights] = useState(loadHeights)
-  const [panelH, setPanelH] = useState(() => {
-    const n = Number(localStorage.getItem(PANEL_KEY) || 300)
-    return Number.isFinite(n) ? Math.max(180, n) : 300
-  })
+  const wrapH = 6 + 26 + 3 + heights.video + heights.fx + heights.audio + heights.sub
 
   function dragHeight(key: TrackKey, startY: number, startH: number) {
     function move(ev: MouseEvent) {
@@ -67,25 +71,12 @@ export function TimelineView({
     window.addEventListener('mouseup', up)
   }
 
-  function dragPanel(startY: number, startH: number) {
-    function move(ev: MouseEvent) {
-      const next = Math.max(180, Math.min(window.innerHeight * 0.7, startH + startY - ev.clientY))
-      setPanelH(next)
-      localStorage.setItem(PANEL_KEY, String(next))
-    }
-    function up() {
-      window.removeEventListener('mousemove', move)
-      window.removeEventListener('mouseup', up)
-    }
-    window.addEventListener('mousemove', move)
-    window.addEventListener('mouseup', up)
-  }
-
   const ticks = useMemo(() => {
     const out: number[] = []
     for (let t = 0; t <= duration; t += 2000) out.push(t)
     return out
   }, [duration])
+  const layerLanes = useMemo(() => overlayLanes(timeline.overlays), [timeline.overlays])
 
   function msFromEvent(e: ReactMouseEvent) {
     const lane = laneRef.current
@@ -95,13 +86,13 @@ export function TimelineView({
   }
 
   return (
-    <div className="timeline-wrap" style={{ height: panelH }}>
+    <div className="timeline-wrap" style={{ height: wrapH }}>
       <div
         className="tl-grip"
-        title="拖动改变时间线高度"
+        title="拖动改变视频轨道高度"
         onMouseDown={(e) => {
           e.preventDefault()
-          dragPanel(e.clientY, panelH)
+          dragHeight('video', e.clientY, heights.video)
         }}
       />
       <div className="ruler" style={{ width: width + 76 }} onMouseDown={(e) => onSeek(msFromEvent(e))}>
@@ -113,8 +104,8 @@ export function TimelineView({
       </div>
       <div className="tracks" onMouseMove={(e) => setHoverMs(msFromEvent(e))}>
         <div className="playhead" style={{ left: 76 + (playheadMs / 1000) * PPS }} />
-        <div className="video-group" style={{ height: heights.video + heights.overlay }}>
-          <div className="track-label video-group-label">
+        <div className="track" style={{ height: heights.video }}>
+          <div className="track-label">
             视频
             <span
               className="track-resize"
@@ -125,70 +116,111 @@ export function TimelineView({
               }}
             />
           </div>
-          <div className="video-lanes">
-            <div
-              className="lane"
-              ref={laneRef}
-              style={{ width, height: heights.video }}
-              onMouseDown={(e) => {
-                if (e.target === e.currentTarget) {
-                  onSelectClip(null)
-                  onSeek(msFromEvent(e))
-                }
-              }}
-            >
-              {timeline.storyline.map((clip) => (
-                <ClipBlock
-                  key={clip.id}
-                  clip={clip}
-                  name={assets.find((a) => a.id === clip.assetId)?.name ?? '片段'}
-                  selected={selectedClipId === clip.id}
-                  onSelect={() => {
-                    onSelectClip(clip.id)
-                    onSelectCue(null)
-                  }}
-                  onSeek={onSeek}
-                  onTrim={(inMs, outMs) => onOps([{ op: 'trim_clip', clipId: clip.id, inMs, outMs }], '修剪片段')}
-                  onDelete={() => onDeleteClip?.(clip.id)}
-                />
-              ))}
-            </div>
-            <div className="lane fx-lane" style={{ width, height: heights.overlay }}>
-              {timeline.storyline.map((clip) => {
-                const tags = fxTags(clip)
-                if (!tags.length) return null
-                return (
-                  <div
-                    key={'fx-' + clip.id}
-                    className="fx-bar"
-                    style={{
-                      left: (clip.startMs / 1000) * PPS,
-                      width: Math.max(8, (clip.durationMs / 1000) * PPS)
-                    }}
-                    title={tags.join(' · ')}
-                  >
-                    {tags.join(' · ')}
-                  </div>
-                )
-              })}
-              {timeline.overlays.map((clip) => (
-                <ClipBlock
-                  key={clip.id}
-                  clip={clip}
-                  name={assets.find((a) => a.id === clip.assetId)?.name ?? '效果'}
-                  selected={selectedClipId === clip.id}
-                  onSelect={() => {
-                    onSelectClip(clip.id)
-                    onSelectCue(null)
-                  }}
-                  onSeek={onSeek}
-                  onTrim={(inMs, outMs) => onOps([{ op: 'trim_clip', clipId: clip.id, inMs, outMs }], '修剪效果')}
-                  onDelete={() => onDeleteClip?.(clip.id)}
-                />
-              ))}
-            </div>
+          <div
+            className="lane"
+            ref={laneRef}
+            style={{ width }}
+            onMouseDown={(e) => {
+              if (e.target === e.currentTarget) {
+                onSelectClip(null)
+                onSeek(msFromEvent(e))
+              }
+            }}
+          >
+            {timeline.storyline.map((clip) => (
+              <ClipBlock
+                key={clip.id}
+                clip={clip}
+                name={assets.find((a) => a.id === clip.assetId)?.name ?? '片段'}
+                peaks={sliceWaveform(
+                  assets.find((a) => a.id === clip.assetId)?.index?.waveform,
+                  assets.find((a) => a.id === clip.assetId)?.durationMs || clip.durationMs,
+                  clip.inMs,
+                  clip.outMs
+                )}
+                selected={selectedClipId === clip.id}
+                onSelect={() => {
+                  onSelectClip(clip.id)
+                  onSelectCue(null)
+                }}
+                onSeek={onSeek}
+                onTrim={(inMs, outMs) => onOps([{ op: 'trim_clip', clipId: clip.id, inMs, outMs }], '修剪片段')}
+                onDelete={() => onDeleteClip?.(clip.id)}
+              />
+            ))}
           </div>
         </div>
+        <div className="track fx-track" style={{ height: heights.fx }}>
+          <div className="track-label">
+            图层
+            <span
+              className="track-resize"
+              onMouseDown={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                dragHeight('fx', e.clientY, heights.fx)
+              }}
+            />
+          </div>
+          <div className="lane fx-lane" style={{ width }}>
+            {timeline.storyline.map((clip) => {
+              const tags = fxTags(clip)
+              if (!tags.length) return null
+              return (
+                <div
+                  key={'fx-' + clip.id}
+                  className="fx-bar"
+                  style={{
+                    left: (clip.startMs / 1000) * PPS,
+                    width: Math.max(8, (clip.durationMs / 1000) * PPS)
+                  }}
+                  title={tags.join(' · ')}
+                  onMouseDown={(e) => {
+                    e.stopPropagation()
+                    onSelectClip(clip.id)
+                    onSelectCue(null)
+                    onSeek(clip.startMs)
+                  }}
+                >
+                  {tags.join(' · ')}
+                </div>
+              )
+            })}
+            {timeline.overlays.map((clip, i) => {
+              const lane = layerLanes[i] ?? 0
+              const laneCount = Math.max(1, ...layerLanes.map((n) => n + 1), 1)
+              const kind = clipKind(clip)
+              const name =
+                kind === 'adjustment'
+                  ? '调整层'
+                  : kind === 'solid'
+                    ? `纯色 ${clip.solidColor || ''}`
+                    : kind === 'text'
+                      ? clip.text?.text?.slice(0, 12) || '文字'
+                      : kind === 'shape'
+                        ? clip.shape?.shape === 'ellipse' ? '椭圆' : '矩形'
+                        : assets.find((a) => a.id === clip.assetId)?.name ?? '图层'
+              return (
+                <ClipBlock
+                  key={clip.id}
+                  clip={clip}
+                  name={name}
+                  selected={selectedClipId === clip.id}
+                  lane={lane}
+                  laneCount={laneCount}
+                  onSelect={() => {
+                    onSelectClip(clip.id)
+                    onSelectCue(null)
+                  }}
+                  onSeek={onSeek}
+                  onTrim={(inMs, outMs) => onOps([{ op: 'trim_clip', clipId: clip.id, inMs, outMs }], '修剪图层')}
+                  onDelete={() => onDeleteClip?.(clip.id)}
+                />
+              )
+            })}
+          </div>
+        </div>
+        <div className="track-split" />
         <div className="track sub narrow" style={{ height: heights.audio }}>
           <div className="track-label">
             音频
@@ -207,6 +239,12 @@ export function TimelineView({
                 key={clip.id}
                 clip={clip}
                 name={assets.find((a) => a.id === clip.assetId)?.name ?? '音乐'}
+                peaks={sliceWaveform(
+                  assets.find((a) => a.id === clip.assetId)?.index?.waveform,
+                  assets.find((a) => a.id === clip.assetId)?.durationMs || clip.durationMs,
+                  clip.inMs,
+                  clip.outMs
+                )}
                 selected={selectedClipId === clip.id}
                 onSelect={() => {
                   onSelectClip(clip.id)
@@ -264,6 +302,24 @@ export function TimelineView({
   )
 }
 
+function Waveform({ peaks }: { peaks: number[] }) {
+  if (peaks.length < 2) return null
+  const w = Math.max(2, peaks.length)
+  const h = 32
+  let d = `M 0 ${h}`
+  for (let i = 0; i < peaks.length; i++) {
+    const x = (i / (peaks.length - 1)) * w
+    const y = h - Math.min(1, Math.max(0, peaks[i] ?? 0)) * h
+    d += ` L ${x.toFixed(1)} ${y.toFixed(1)}`
+  }
+  d += ` L ${w} ${h} Z`
+  return (
+    <svg className="clip-wave" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" aria-hidden>
+      <path d={d} />
+    </svg>
+  )
+}
+
 function ClipBlock({
   clip,
   name,
@@ -271,7 +327,10 @@ function ClipBlock({
   onSelect,
   onSeek,
   onTrim,
-  onDelete
+  onDelete,
+  lane = 0,
+  laneCount = 1,
+  peaks
 }: {
   clip: TimelineClip
   name: string
@@ -280,13 +339,31 @@ function ClipBlock({
   onSeek: (ms: number) => void
   onTrim: (inMs: number, outMs: number) => void
   onDelete?: () => void
+  lane?: number
+  laneCount?: number
+  peaks?: number[]
 }) {
   const left = (clip.startMs / 1000) * PPS
   const width = Math.max(8, (clip.durationMs / 1000) * PPS)
+  const kind = clipKind(clip)
+  const h = 100 / laneCount
   return (
     <div
-      className={'clip' + (clip.source !== 'human' ? ' ai' : '') + (selected ? ' selected' : '')}
-      style={{ left, width }}
+      className={
+        'clip' +
+        (clip.source !== 'human' ? ' ai' : '') +
+        (selected ? ' selected' : '') +
+        (kind === 'solid' ? ' solid' : '') +
+        (kind === 'adjustment' ? ' adjust' : '') +
+        (kind === 'text' ? ' text' : '') +
+        (kind === 'shape' ? ' shape' : '')
+      }
+      style={{
+        left,
+        width,
+        top: `calc(${lane * h}% + 4px)`,
+        height: `calc(${h}% - 8px)`
+      }}
       onMouseDown={(e) => {
         e.stopPropagation()
         onSelect()
@@ -307,6 +384,7 @@ function ClipBlock({
       }}
     >
       <span className="handle l" onMouseDown={(e) => startTrim(e, clip, 'l', onTrim)} />
+      {peaks?.length ? <Waveform peaks={peaks} /> : null}
       <span className="clip-name">{name}</span>
       {selected ? (
         <button
@@ -340,10 +418,38 @@ function fxTags(clip: TimelineClip): string[] {
   if (Math.abs(fx.speed - 1) > 0.01) tags.push(`${fx.speed.toFixed(2)}x`)
   if (fx.transitionOut.type === 'cross_dissolve') tags.push('溶解')
   if (fx.transitionOut.type === 'fade_black') tags.push('淡出黑')
+  if (fx.transitionOut.type === 'fade_white') tags.push('淡出白')
+  if (fx.transitionOut.type === 'push') tags.push('推')
   if (fx.rotate) tags.push(`${fx.rotate}°`)
   if (fx.flipX) tags.push('翻转')
   if (fx.crop) tags.push('裁切')
   if (fx.fadeInMs || fx.fadeOutMs) tags.push('淡化')
+  const blend = clipBlend(clip)
+  if (blend === 'add') tags.push('相加')
+  if (blend === 'screen') tags.push('滤色')
+  if (blend === 'multiply') tags.push('正片')
+  if (clipKind(clip) === 'adjustment') tags.push('调整')
+  if (clipKind(clip) === 'solid') tags.push('纯色')
+  if (clipKind(clip) === 'text') tags.push(clip.textAnim === 'typewriter' ? '打字机' : '文字')
+  if (clipKind(clip) === 'shape') tags.push('形状')
+  if (fx.masks.length) tags.push('蒙版')
+  if (fx.keys?.opacity?.length || fx.keys?.scale?.length || fx.keys?.posX?.length || fx.keys?.posY?.length || fx.keys?.volume?.length)
+    tags.push('关键帧')
+  if (fx.audioLink) tags.push('鼓点')
+  if (fx.denoise?.enabled) tags.push('降噪')
+  if (fx.freeze) tags.push('冻结')
+  if (fx.reverse) tags.push('倒放')
+  if (fx.stabilize?.enabled) tags.push('稳像')
+  if (fx.key) tags.push(fx.key.color === '#0000ff' ? '蓝幕' : '抠像')
+  for (const e of fx.effects) {
+    if (e.enabled === false) continue
+    if (e.type === 'blur') tags.push('模糊')
+    else if (e.type === 'radial_blur') tags.push('径向')
+    else if (e.type === 'glow') tags.push('发光')
+    else if (e.type === 'grain') tags.push('颗粒')
+    else if (e.type === 'mosaic') tags.push('马赛克')
+    else if (e.type === 'lut') tags.push('LUT')
+  }
   const c = fx.color
   if (c.exposure || c.contrast || c.saturation || c.warmth) tags.push('调色')
   return tags

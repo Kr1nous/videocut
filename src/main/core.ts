@@ -1,7 +1,7 @@
 import { copyFile, mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import { basename, extname, join } from 'node:path'
-import { BrowserWindow } from 'electron'
 import { id, nowIso } from '../shared/ids'
+import { packStorylineClips } from '../shared/compose'
 import {
   type AppSettings,
   type MediaAsset,
@@ -22,6 +22,9 @@ import {
 
 const UNDO_LIMIT = 80
 
+export type EditorState = ReturnType<ProjectStore['getState']>
+type StateListener = (state: EditorState) => void
+
 export class ProjectStore {
   project: Project | null = null
   projectPath: string | null = null
@@ -29,19 +32,23 @@ export class ProjectStore {
   settingsPath = ''
   private undo: Timeline[] = []
   private redo: Timeline[] = []
-  private windows: BrowserWindow[] = []
+  private listeners = new Set<StateListener>()
 
-  attach(win: BrowserWindow): void {
-    this.windows.push(win)
-    win.on('closed', () => {
-      this.windows = this.windows.filter((w) => w !== win)
-    })
+  onChange(fn: StateListener): () => void {
+    this.listeners.add(fn)
+    return () => {
+      this.listeners.delete(fn)
+    }
   }
 
   broadcast(): void {
     const payload = this.getState()
-    for (const win of this.windows) {
-      if (!win.isDestroyed()) win.webContents.send('state:changed', payload)
+    for (const fn of this.listeners) {
+      try {
+        fn(payload)
+      } catch (err) {
+        console.error(err)
+      }
     }
   }
 
@@ -143,6 +150,8 @@ export class ProjectStore {
     this.projectPath = folder
     this.undo = []
     this.redo = []
+    this.settings.lastProjectPath = folder
+    await this.saveSettings()
     await this.save()
     this.broadcast()
   }
@@ -153,6 +162,8 @@ export class ProjectStore {
     this.projectPath = folder
     this.undo = []
     this.redo = []
+    this.settings.lastProjectPath = folder
+    await this.saveSettings()
     this.broadcast()
   }
 
@@ -269,11 +280,7 @@ export class ProjectStore {
     project.timeline.storyline = project.timeline.storyline.filter((c) => c.assetId !== id)
     project.timeline.overlays = project.timeline.overlays.filter((c) => c.assetId !== id)
     project.timeline.audio = project.timeline.audio.filter((c) => c.assetId !== id)
-    let t = 0
-    for (const c of project.timeline.storyline) {
-      c.startMs = t
-      t += c.durationMs
-    }
+    packStorylineClips(project.timeline.storyline)
     project.assets = project.assets.filter((a) => a.id !== id)
     try {
       await unlink(asset.path)
@@ -283,6 +290,13 @@ export class ProjectStore {
     if (asset.thumbPath) {
       try {
         await unlink(asset.thumbPath)
+      } catch {
+        /* ignore */
+      }
+    }
+    if (asset.proxyPath) {
+      try {
+        await unlink(asset.proxyPath)
       } catch {
         /* ignore */
       }
@@ -301,7 +315,7 @@ export class ProjectStore {
 
   async updateAssetMeta(
     assetId: string,
-    meta: Partial<Pick<MediaAsset, 'durationMs' | 'width' | 'height' | 'fps' | 'thumbPath' | 'index'>>
+    meta: Partial<Pick<MediaAsset, 'durationMs' | 'width' | 'height' | 'fps' | 'thumbPath' | 'index' | 'proxyPath' | 'proxyWidth' | 'proxyHeight'>>
   ): Promise<void> {
     const project = this.requireProject()
     const asset = project.assets.find((a) => a.id === assetId)
@@ -352,7 +366,14 @@ export class ProjectStore {
         kind: a.kind,
         durationMs: a.durationMs,
         width: a.width,
-        height: a.height
+        height: a.height,
+        proxy: Boolean(a.proxyPath)
+      })),
+      renderQueue: (project.renderQueue ?? []).map((j) => ({
+        id: j.id,
+        preset: j.preset,
+        status: j.status,
+        path: j.path
       })),
       storyline: project.timeline.storyline.map((c) => ({
         id: c.id,
@@ -362,7 +383,22 @@ export class ProjectStore {
         durationMs: c.durationMs,
         inMs: c.inMs,
         outMs: c.outMs,
-        volume: c.volume
+        volume: c.volume,
+        fx: c.fx
+      })),
+      layers: project.timeline.overlays.map((c) => ({
+        id: c.id,
+        kind: c.kind ?? 'footage',
+        blend: c.blend ?? 'normal',
+        assetId: c.assetId,
+        assetName: project.assets.find((a) => a.id === c.assetId)?.name,
+        startMs: c.startMs,
+        durationMs: c.durationMs,
+        solidColor: c.solidColor,
+        text: c.text?.text,
+        shape: c.shape?.shape,
+        textAnim: c.textAnim,
+        fx: c.fx
       })),
       subtitles: project.timeline.subtitles
     }
@@ -396,12 +432,7 @@ function mergeProviders(
 }
 
 function packStoryline(clips: TimelineClip[]): void {
-  clips.sort((a, b) => a.startMs - b.startMs)
-  let t = 0
-  for (const clip of clips) {
-    clip.startMs = t
-    t += clip.durationMs
-  }
+  packStorylineClips(clips)
 }
 
 function applyOp(project: Project, op: TimelineOp, clipSource: TimelineClip['source'] = 'ai'): void {
@@ -445,15 +476,19 @@ function applyOp(project: Project, op: TimelineOp, clipSource: TimelineClip['sou
       if (!clip) throw new Error(`片段不存在: ${op.clipId}`)
       const local = op.atMs - clip.startMs
       if (local <= 0 || local >= clip.durationMs) throw new Error('分割点不在片段内')
+      const speed = Math.max(0.25, clipFx(clip).speed || 1)
+      const srcDelta = local * speed
       const right: TimelineClip = {
         ...clip,
         id: id('clip'),
         startMs: clip.startMs + local,
-        inMs: clip.inMs + local,
-        durationMs: clip.durationMs - local
+        inMs: clip.inMs + srcDelta,
+        fx: clip.fx ? { ...clip.fx } : {}
       }
-      clip.outMs = clip.inMs + local
-      clip.durationMs = local
+      clip.outMs = clip.inMs + srcDelta
+      refreshDuration(clip)
+      right.outMs = right.outMs
+      refreshDuration(right)
       const list = listOfClip(tl, clip.id)
       const idx = list.findIndex((c) => c.id === clip.id)
       list.splice(idx + 1, 0, right)
@@ -523,7 +558,16 @@ function applyOp(project: Project, op: TimelineOp, clipSource: TimelineClip['sou
       const clip = findClip(tl, op.clipId)
       if (!clip) throw new Error(`片段不存在: ${op.clipId}`)
       if (op.volume != null) clip.volume = op.volume
-      if (op.fx) clip.fx = { ...clip.fx, ...op.fx, color: { ...clipFx(clip).color, ...op.fx.color } }
+      if (op.fx) {
+        clip.fx = {
+          ...clip.fx,
+          ...op.fx,
+          color: { ...clipFx(clip).color, ...op.fx.color },
+          keys: op.fx.keys !== undefined ? op.fx.keys : clip.fx?.keys
+        }
+      }
+      if (op.text) clip.text = { ...(clip.text ?? { text: '', font: 'PingFang SC', fontSize: 72, color: '#fff', stroke: '#000', strokeWidth: 3, align: 'center' }), ...op.text }
+      if (op.blend) clip.blend = op.blend
       refreshDuration(clip)
       break
     }
@@ -541,8 +585,116 @@ function applyOp(project: Project, op: TimelineOp, clipSource: TimelineClip['sou
         outMs,
         volume: 0,
         source: clipSource,
-        fx: { opacity: 1 }
+        fx: { opacity: 1, scale: 0.32, posX: 0.82, posY: 0.78 },
+        kind: 'footage',
+        blend: 'normal'
       })
+      break
+    }
+    case 'add_layer': {
+      const kind = op.kind ?? (op.assetId ? 'footage' : 'solid')
+      const startMs = Math.max(0, op.startMs)
+      const blend = op.blend ?? 'normal'
+      if (kind === 'footage') {
+        const asset = project.assets.find((a) => a.id === op.assetId)
+        if (!asset) throw new Error(`素材不存在: ${op.assetId}`)
+        const inMs = op.inMs ?? 0
+        const outMs =
+          op.outMs ??
+          (op.durationMs != null ? inMs + op.durationMs : Math.min(asset.durationMs || inMs + 5000, inMs + 5000))
+        tl.overlays.push({
+          id: id('clip'),
+          assetId: asset.id,
+          startMs,
+          durationMs: Math.max(1, outMs - inMs),
+          inMs,
+          outMs,
+          volume: 0,
+          source: clipSource,
+          kind: 'footage',
+          blend,
+          fx: { opacity: 1, scale: 1, posX: 0.5, posY: 0.5, ...op.fx }
+        })
+      } else if (kind === 'adjustment') {
+        const dur = Math.max(1, op.durationMs ?? Math.max(1000, timelineDurationMs(tl) - startMs || 5000))
+        tl.overlays.push({
+          id: id('clip'),
+          assetId: '',
+          startMs,
+          durationMs: dur,
+          inMs: 0,
+          outMs: dur,
+          volume: 0,
+          source: clipSource,
+          kind: 'adjustment',
+          blend: 'normal',
+          fx: { opacity: 1, ...op.fx }
+        })
+      } else if (kind === 'text') {
+        const dur = Math.max(1, op.durationMs ?? 3000)
+        tl.overlays.push({
+          id: id('clip'),
+          assetId: '',
+          startMs,
+          durationMs: dur,
+          inMs: 0,
+          outMs: dur,
+          volume: 0,
+          source: clipSource,
+          kind: 'text',
+          blend: 'normal',
+          text: {
+            text: '标题',
+            font: 'PingFang SC',
+            fontSize: 72,
+            color: '#ffffff',
+            stroke: '#000000',
+            strokeWidth: 3,
+            align: 'center',
+            ...op.text
+          },
+          textAnim: op.textAnim,
+          fx: { opacity: 1, scale: 1, posX: 0.5, posY: 0.5, ...op.fx }
+        })
+      } else if (kind === 'shape') {
+        const dur = Math.max(1, op.durationMs ?? 3000)
+        tl.overlays.push({
+          id: id('clip'),
+          assetId: '',
+          startMs,
+          durationMs: dur,
+          inMs: 0,
+          outMs: dur,
+          volume: 0,
+          source: clipSource,
+          kind: 'shape',
+          blend,
+          shape: {
+            shape: 'rect',
+            fill: op.solidColor || '#e0a93a',
+            width: 0.42,
+            height: 0.22,
+            ...op.shape
+          },
+          fx: { opacity: 1, scale: 1, posX: 0.5, posY: 0.5, ...op.fx }
+        })
+      } else {
+        const dur = Math.max(1, op.durationMs ?? 5000)
+        tl.overlays.push({
+          id: id('clip'),
+          assetId: '',
+          startMs,
+          durationMs: dur,
+          inMs: 0,
+          outMs: dur,
+          volume: 0,
+          source: clipSource,
+          kind: 'solid',
+          blend,
+          solidColor: op.solidColor || '#000000',
+          fx: { opacity: 1, scale: 1, posX: 0.5, posY: 0.5, ...op.fx }
+        })
+      }
       break
     }
     case 'add_audio': {
@@ -642,6 +794,16 @@ function opLabel(op: TimelineOp): string {
       return '改片段属性'
     case 'add_overlay':
       return '叠加 B-roll'
+    case 'add_layer':
+      return op.kind === 'adjustment'
+        ? '加调整层'
+        : op.kind === 'solid'
+          ? '加纯色层'
+          : op.kind === 'text'
+            ? '加文字层'
+            : op.kind === 'shape'
+              ? '加形状'
+              : '叠加图层'
     case 'add_audio':
       return '加音频'
     case 'delete_asset':

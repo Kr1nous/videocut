@@ -7,3 +7,12 @@ dist
 .env.local
 release
 .npm-cache
+src-tauri/target
+src-tauri/target-rel
+src-tauri/gen
+src-tauri/resources/node
+src-tauri/resources/sidecar
+src-tauri/resources/cli
+app-icon.png
+imagine-src.jpg
+*.tsbuildinfo

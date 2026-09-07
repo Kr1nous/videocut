@@ -38,6 +38,10 @@ export const EDITOR_TOOLS: ToolSpec[] = [
                   'remove_subtitle',
                   'replace_subtitles',
                   'clear_timeline',
+                  'patch_clip',
+                  'add_overlay',
+                  'add_layer',
+                  'add_audio',
                   'delete_asset'
                 ]
               },

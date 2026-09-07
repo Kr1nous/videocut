@@ -12,6 +12,8 @@ export function formatTimecode(ms: number, withMs = false): string {
   return sign + (withMs ? `${core}.${String(frac).padStart(2, '0')}` : core)
 }
 
+import { mediaSrc } from './cut'
+
 export function mediaUrl(filePath: string): string {
-  return 'cutmedia://file' + encodeURI(filePath)
+  return mediaSrc(filePath)
 }

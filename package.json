@@ -1,18 +1,26 @@
 {
   "name": "cut-studio",
   "productName": "剪辑台",
-  "version": "0.10.0",
+  "version": "1.0.0",
   "description": "AI 接管剪辑、人类微调的 macOS 剪辑软件",
   "private": true,
   "type": "module",
-  "main": "./out/main/index.js",
   "scripts": {
-    "dev": "electron-vite dev",
-    "build": "electron-vite build",
-    "preview": "electron-vite preview",
-    "mcp:stdio": "electron-vite build --mode production && node ./out/main/mcp-stdio.js"
+    "dev": "tauri dev",
+    "dev:ui": "vite --port 5173 --strictPort",
+    "sidecar": "tsx src/main/sidecar.ts",
+    "build:sidecar": "node scripts/build-sidecar.mjs",
+    "build:ui": "vite build",
+    "build": "tauri build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "mcp:stdio": "npm run build:sidecar && node ./out/sidecar/index.js",
+    "verify:compose": "tsx src/main/render/verify.ts"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-dialog": "^2.7.3",
+    "@tauri-apps/plugin-opener": "^2.5.5",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "node-pty": "^1.1.0",
@@ -20,15 +28,15 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
-    "@electron/rebuild": "^4.2.0",
+    "@tauri-apps/cli": "^2.11.4",
     "@types/node": "^24.3.1",
     "@types/react": "^19.1.12",
     "@types/react-dom": "^19.1.9",
     "@vitejs/plugin-react": "^5.0.2",
-    "electron": "^37.3.1",
-    "electron-vite": "^4.0.0",
+    "esbuild": "^0.28.2",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
+    "tsx": "^4.23.13",
     "typescript": "^5.9.2",
     "vite": "^7.1.5"
   }

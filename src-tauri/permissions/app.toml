@@ -1,0 +1,9 @@
+[[permission]]
+identifier = "allow-show-in-folder"
+description = "Reveal a file in Finder"
+commands.allow = ["show_in_folder"]
+
+[[permission]]
+identifier = "allow-open-privacy-settings"
+description = "Open macOS Full Disk Access settings"
+commands.allow = ["open_privacy_settings"]

@@ -22,6 +22,8 @@ const CATS: { id: string; label: string; items: Item[] }[] = [
       { label: '替换镜头', name: 'replace_clip', needClip: true, needAsset: true },
       { label: '慢动作', name: 'slow_motion', args: { rate: 0.5 }, needClip: true },
       { label: '快放 2x', name: 'set_speed', args: { rate: 2 }, needClip: true },
+      { label: '冻结帧', name: 'freeze_frame', needClip: true },
+      { label: '倒放', name: 'reverse_clip', needClip: true },
       { label: '重置效果', name: 'reset_fx', needClip: true }
     ]
   },
@@ -33,6 +35,8 @@ const CATS: { id: string; label: string; items: Item[] }[] = [
       { label: '交叉溶解', name: 'set_transition', args: { type: 'cross_dissolve', durationMs: 400 } },
       { label: '长溶解', name: 'set_transition', args: { type: 'cross_dissolve', durationMs: 900 } },
       { label: '淡出黑', name: 'fade_to_black', args: { durationMs: 800 } },
+      { label: '淡出白', name: 'set_transition', args: { type: 'fade_white', durationMs: 400 } },
+      { label: '推', name: 'set_transition', args: { type: 'push', durationMs: 400 } },
       { label: '淡入', name: 'fade_from_black', args: { durationMs: 800 } }
     ]
   },
@@ -48,7 +52,12 @@ const CATS: { id: string; label: string; items: Item[] }[] = [
       { label: '小字', name: 'set_subtitle_style', args: { fontSize: 32 } },
       { label: '后移 0.2s', name: 'shift_subtitles', args: { deltaMs: 200 } },
       { label: '前移 0.2s', name: 'shift_subtitles', args: { deltaMs: -200 } },
-      { label: '导出 SRT', name: 'export_srt' }
+      { label: '导出 SRT', name: 'export_srt' },
+      { label: '标题淡入', name: 'animate_text', args: { preset: 'fade' } },
+      { label: '打字机', name: 'animate_text', args: { preset: 'typewriter' } },
+      { label: '下三分之一', name: 'animate_text', args: { preset: 'lower_third' } },
+      { label: '矩形', name: 'add_shape', args: { shape: 'rect' } },
+      { label: '椭圆', name: 'add_shape', args: { shape: 'ellipse' } }
     ]
   },
   {
@@ -60,7 +69,9 @@ const CATS: { id: string; label: string; items: Item[] }[] = [
       { label: '静音', name: 'mute_clip', needClip: true },
       { label: '音乐闪避', name: 'duck_music', args: { enabled: true } },
       { label: '人声增强', name: 'audio_preset', args: { name: 'voice_boost' } },
-      { label: '铺选中音乐', name: 'set_music', needAsset: true }
+      { label: '铺选中音乐', name: 'set_music', needAsset: true },
+      { label: '跟鼓点', name: 'link_to_audio', args: { prop: 'both', amount: 0.45 }, needClip: true },
+      { label: '降噪', name: 'denoise_audio', args: { enabled: true, amount: 0.5 }, needClip: true }
     ]
   },
   {
@@ -74,7 +85,13 @@ const CATS: { id: string; label: string; items: Item[] }[] = [
       { label: '翻转', name: 'flip', needClip: true },
       { label: '放大', name: 'zoom_in', needClip: true },
       { label: '自动增强', name: 'auto_enhance' },
-      { label: '叠加 B-roll', name: 'overlay_broll', needAsset: true }
+      { label: '叠加图层', name: 'add_layer', needAsset: true },
+      { label: '叠加 B-roll', name: 'overlay_broll', needAsset: true },
+      { label: '纯色层', name: 'add_solid' },
+      { label: '调整层', name: 'add_adjustment_layer' },
+      { label: '稳像', name: 'stabilize', args: { enabled: true }, needClip: true },
+      { label: '抠绿幕', name: 'key_color', args: { color: 'green' }, needClip: true },
+      { label: '抠蓝幕', name: 'key_color', args: { color: 'blue' }, needClip: true }
     ]
   },
   {
@@ -85,7 +102,39 @@ const CATS: { id: string; label: string; items: Item[] }[] = [
       { label: '鲜艳', name: 'apply_filter', args: { name: 'vivid' } },
       { label: '电影', name: 'apply_filter', args: { name: 'cinema' } },
       { label: '黑白', name: 'apply_filter', args: { name: 'bw' } },
-      { label: '复古', name: 'apply_filter', args: { name: 'vintage' } }
+      { label: '复古', name: 'apply_filter', args: { name: 'vintage' } },
+      { label: '高斯模糊', name: 'add_effect', args: { type: 'blur' }, needClip: true },
+      { label: '径向模糊', name: 'add_effect', args: { type: 'radial_blur' }, needClip: true },
+      { label: '发光', name: 'add_effect', args: { type: 'glow' }, needClip: true },
+      { label: '颗粒', name: 'add_effect', args: { type: 'grain' }, needClip: true },
+      { label: '马赛克', name: 'add_effect', args: { type: 'mosaic' }, needClip: true },
+      { label: '暖色 LUT', name: 'apply_lut', args: { name: 'warm' }, needClip: true },
+      { label: '冷色 LUT', name: 'apply_lut', args: { name: 'cool' }, needClip: true }
+    ]
+  },
+  {
+    id: 'mask',
+    label: '蒙版',
+    items: [
+      { label: '椭圆', name: 'add_mask', args: { shape: 'ellipse', mode: 'add' }, needClip: true },
+      { label: '矩形', name: 'add_mask', args: { shape: 'rect', mode: 'add' }, needClip: true },
+      { label: '减去椭圆', name: 'add_mask', args: { shape: 'ellipse', mode: 'subtract' }, needClip: true },
+      { label: '减去矩形', name: 'add_mask', args: { shape: 'rect', mode: 'subtract' }, needClip: true },
+      { label: '清除蒙版', name: 'remove_mask', needClip: true }
+    ]
+  },
+  {
+    id: 'export',
+    label: '导出',
+    items: [
+      { label: '1080p', name: 'export', args: { preset: '1080p' } },
+      { label: '竖屏', name: 'export', args: { preset: 'shorts' } },
+      { label: '4K', name: 'export', args: { preset: '4k' } },
+      { label: '透明 MOV', name: 'export', args: { preset: 'alpha' } },
+      { label: 'ProRes', name: 'export', args: { preset: 'prores' } },
+      { label: '加入队列', name: 'render_queue_add', args: { preset: '1080p' } },
+      { label: '队列透明', name: 'render_queue_add', args: { preset: 'alpha' } },
+      { label: '生成代理', name: 'make_proxy' }
     ]
   }
 ]
@@ -113,12 +162,25 @@ export function ToolTabs({
   function fire(item: Item) {
     const args = { ...(item.args ?? {}) }
     if (item.needClip && clipId) args.clipId = clipId
-    if (item.name === 'overlay_broll') {
+    if (item.name === 'overlay_broll' || item.name === 'add_layer') {
       const id = assetId ?? assets.find((a) => a.kind === 'video' || a.kind === 'image')?.id
       if (!id) return
       args.assetId = id
       args.startMs = playheadMs
     }
+    if (item.name === 'add_solid' || item.name === 'add_adjustment_layer' || item.name === 'add_shape') {
+      args.startMs = playheadMs
+    }
+    if (item.name === 'animate_text' || item.name === 'add_text_layer') {
+      const text = window.prompt('标题文字', '标题')
+      if (!text) return
+      args.text = text
+      args.startMs = playheadMs
+    }
+    if (item.name === 'freeze_frame' || item.name === 'set_keyframe') {
+      args.atMs = playheadMs
+    }
+    if (item.name === 'make_proxy' && assetId) args.assetId = assetId
     if (item.name === 'set_music') {
       const id = assetId ?? assets.find((a) => a.kind === 'audio')?.id
       if (!id) return

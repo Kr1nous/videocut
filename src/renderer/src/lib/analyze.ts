@@ -1,3 +1,4 @@
+import { downsamplePeaks } from '@shared/audio'
 import type { AssetIndex, MediaAsset, TimeRange } from '@shared/types'
 import { mediaUrl } from './format'
 
@@ -63,7 +64,7 @@ async function analyzeAudio(asset: MediaAsset): Promise<Pick<AssetIndex, 'silenc
   })
   if (mode) flush(rms.length, mode === 's')
   void ctx.close()
-  return { silence, speech, peakRms: peak }
+  return { silence, speech, peakRms: peak, waveform: downsamplePeaks(rms) }
 }
 
 async function analyzeScenes(asset: MediaAsset): Promise<number[]> {

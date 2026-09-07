@@ -90,7 +90,10 @@ export function Library({
               </div>
               <div className="meta">
                 <b title={a.name}>{a.name}</b>
-                <small>{a.durationMs ? formatTimecode(a.durationMs) : '读取中…'}</small>
+                <small>
+                  {a.durationMs ? formatTimecode(a.durationMs) : '读取中…'}
+                  {a.proxyPath ? ' · 代理' : ''}
+                </small>
                 <button
                   type="button"
                   className="asset-del"

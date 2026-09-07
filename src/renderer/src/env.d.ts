@@ -1,5 +1,5 @@
 /// <reference types="vite/client" />
-import type { CutApi } from '../../preload/index'
+import type { CutApi } from './lib/cut'
 
 declare global {
   interface Window {

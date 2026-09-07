@@ -12,5 +12,5 @@
     "outDir": "./out",
     "declaration": true
   },
-  "include": ["src/main/**/*", "src/preload/**/*", "src/shared/**/*", "electron.vite.config.ts"]
+  "include": ["src/main/**/*", "src/shared/**/*", "vite.config.ts"]
 }

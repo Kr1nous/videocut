@@ -70,6 +70,8 @@ export default function App() {
       }
       if (ev === 'menu:import') void window.cut.importMedia()
       if (ev === 'menu:terminal') setTerminalOpen((v) => !v)
+      if (ev === 'menu:undo') void window.cut.undo()
+      if (ev === 'menu:redo') void window.cut.redo()
     })
   }, [newProject])
 
@@ -279,6 +281,13 @@ export default function App() {
             setPlayhead(ms)
           }}
           subtitleStyle={project.subtitleStyle}
+          settings={project.settings}
+          selectedClip={
+            project.timeline.storyline.find((c) => c.id === selectedClip) ??
+            project.timeline.overlays.find((c) => c.id === selectedClip) ??
+            null
+          }
+          onAction={(name, args) => void runTool(name, args ?? {})}
         />
         <ReviewPanel
           project={project}
@@ -294,6 +303,7 @@ export default function App() {
           project.timeline.audio.find((c) => c.id === selectedClip) ??
           null
         }
+        playheadMs={playhead}
         onAction={(name, args) => void runTool(name, args ?? {})}
         onDeleteClip={(id) => void deleteClip(id)}
       />

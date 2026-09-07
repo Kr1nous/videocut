@@ -23,13 +23,35 @@ const HELP = `剪辑台 CLI — 在软件终端里运行，直接接管当前项
   cutstudio fit-duration --ms 60000
   cutstudio captions-from-transcript
   cutstudio set-aspect 16:9|9:16|1:1
-  cutstudio set-transition cross_dissolve|fade_black|none
+  cutstudio set-transition cross_dissolve|fade_black|fade_white|push|none
   cutstudio fade-to-black
   cutstudio normalize-loudness
   cutstudio duck-music
   cutstudio apply-filter vivid|cinema|bw|vintage|none
+  cutstudio add-effect blur|radial_blur|glow|grain|mosaic [--amount 6] [--clip id]
+  cutstudio apply-lut warm|cool|contrast|green [--clip id] [--path file.cube]
+  cutstudio list-effects
   cutstudio set-speed --rate 1.25 [--clip id]
-  cutstudio export [1080p|4k|shorts]
+  cutstudio set-opacity --value 0.5 [--clip id]
+  cutstudio set-transform [--scale 1] [--x 0.5] [--y 0.5] [--clip id]
+  cutstudio add-layer --asset <id> [--start 毫秒] [--blend normal|add|screen|multiply]
+  cutstudio set-blend normal|add|screen|multiply [--clip id]
+  cutstudio add-solid [--color #000000] [--start 毫秒] [--ms 5000]
+  cutstudio add-adjustment [--start 毫秒] [--ms 5000] [--filter bw]
+  cutstudio add-mask ellipse|rect [--mode add|subtract] [--clip id]
+  cutstudio remove-mask [--clip id]
+  cutstudio set-keyframe opacity|scale|x|y|volume --value 0.5 [--at 毫秒] [--ease linear|ease_in|ease_out|ease_in_out] [--clip id]
+  cutstudio freeze-frame [--clip id]
+  cutstudio reverse-clip [--clip id]
+  cutstudio stabilize [--amount 0.5] [--clip id]
+  cutstudio key-color green|blue [--tolerance 0.3] [--spill 0.35] [--edge 0.08] [--clip id]
+  cutstudio link-to-audio [--prop scale|glow|both] [--amount 0.45] [--clip id]
+  cutstudio denoise-audio [--amount 0.5] [--clip id]
+  cutstudio animate-text --text "标题" [--preset fade|typewriter|lower_third]
+  cutstudio add-shape rect|ellipse [--color #e0a93a]
+  cutstudio export [1080p|4k|shorts|alpha|prores]
+  cutstudio render-queue-add [1080p|4k|shorts|alpha|prores]
+  cutstudio make-proxy [--asset id]
   cutstudio split-on-scenes
   cutstudio remove-filler
   cutstudio duplicate-clip [--clip id]
@@ -223,11 +245,137 @@ try {
     case 'apply-filter':
       print(await tool('apply_filter', { name: process.argv[3] || 'vivid', ...(arg('--clip') ? { clipId: arg('--clip') } : {}) }))
       break
+    case 'add-effect':
+      print(await tool('add_effect', {
+        type: process.argv[3] || 'blur',
+        ...(arg('--amount') ? { amount: Number(arg('--amount')) } : {}),
+        ...(arg('--clip') ? { clipId: arg('--clip') } : {})
+      }))
+      break
+    case 'apply-lut':
+      print(await tool('apply_lut', {
+        name: process.argv[3] || 'warm',
+        ...(arg('--path') ? { path: arg('--path') } : {}),
+        ...(arg('--clip') ? { clipId: arg('--clip') } : {})
+      }))
+      break
+    case 'list-effects':
+      print(await tool('list_effects'))
+      break
     case 'set-speed':
       print(await tool('set_speed', { rate: Number(arg('--rate') || 1), ...(arg('--clip') ? { clipId: arg('--clip') } : {}) }))
       break
+    case 'set-opacity':
+      print(await tool('set_opacity', { opacity: Number(arg('--value') || 1), ...(arg('--clip') ? { clipId: arg('--clip') } : {}) }))
+      break
+    case 'set-transform':
+      print(await tool('set_transform', {
+        ...(arg('--scale') ? { scale: Number(arg('--scale')) } : {}),
+        ...(arg('--x') ? { x: Number(arg('--x')) } : {}),
+        ...(arg('--y') ? { y: Number(arg('--y')) } : {}),
+        ...(arg('--clip') ? { clipId: arg('--clip') } : {})
+      }))
+      break
+    case 'add-layer':
+      print(await tool('add_layer', {
+        assetId: arg('--asset'),
+        startMs: Number(arg('--start') || 0),
+        ...(arg('--ms') ? { durationMs: Number(arg('--ms')) } : {}),
+        blend: arg('--blend') || 'normal'
+      }))
+      break
+    case 'set-blend':
+      print(await tool('set_blend', { mode: process.argv[3] || 'normal', ...(arg('--clip') ? { clipId: arg('--clip') } : {}) }))
+      break
+    case 'add-solid':
+      print(await tool('add_solid', {
+        color: arg('--color') || '#000000',
+        startMs: Number(arg('--start') || 0),
+        durationMs: Number(arg('--ms') || 5000)
+      }))
+      break
+    case 'add-adjustment':
+      print(await tool('add_adjustment_layer', {
+        startMs: Number(arg('--start') || 0),
+        ...(arg('--ms') ? { durationMs: Number(arg('--ms')) } : {}),
+        ...(process.argv[3] && !process.argv[3].startsWith('--') ? { filter: process.argv[3] } : {}),
+        ...(arg('--filter') ? { filter: arg('--filter') } : {})
+      }))
+      break
+    case 'add-mask':
+      print(await tool('add_mask', {
+        shape: process.argv[3] || 'ellipse',
+        mode: arg('--mode') || 'add',
+        ...(arg('--clip') ? { clipId: arg('--clip') } : {})
+      }))
+      break
+    case 'remove-mask':
+      print(await tool('remove_mask', arg('--clip') ? { clipId: arg('--clip') } : {}))
+      break
+    case 'set-keyframe':
+      print(await tool('set_keyframe', {
+        prop: process.argv[3] || 'opacity',
+        value: Number(arg('--value') ?? 1),
+        ...(arg('--at') ? { atMs: Number(arg('--at')) } : {}),
+        ease: arg('--ease') || 'ease_in_out',
+        ...(arg('--clip') ? { clipId: arg('--clip') } : {})
+      }))
+      break
+    case 'freeze-frame':
+      print(await tool('freeze_frame', arg('--clip') ? { clipId: arg('--clip') } : {}))
+      break
+    case 'reverse-clip':
+      print(await tool('reverse_clip', arg('--clip') ? { clipId: arg('--clip') } : {}))
+      break
+    case 'stabilize':
+      print(await tool('stabilize', {
+        enabled: true,
+        ...(arg('--amount') ? { amount: Number(arg('--amount')) } : {}),
+        ...(arg('--clip') ? { clipId: arg('--clip') } : {})
+      }))
+      break
+    case 'key-color':
+      print(await tool('key_color', {
+        color: process.argv[3] || 'green',
+        ...(arg('--tolerance') ? { tolerance: Number(arg('--tolerance')) } : {}),
+        ...(arg('--spill') ? { spill: Number(arg('--spill')) } : {}),
+        ...(arg('--edge') ? { edge: Number(arg('--edge')) } : {}),
+        ...(arg('--clip') ? { clipId: arg('--clip') } : {})
+      }))
+      break
+    case 'link-to-audio':
+      print(await tool('link_to_audio', {
+        prop: arg('--prop') || 'both',
+        ...(arg('--amount') ? { amount: Number(arg('--amount')) } : {}),
+        ...(arg('--clip') ? { clipId: arg('--clip') } : {})
+      }))
+      break
+    case 'denoise-audio':
+      print(await tool('denoise_audio', {
+        enabled: true,
+        ...(arg('--amount') ? { amount: Number(arg('--amount')) } : {}),
+        ...(arg('--clip') ? { clipId: arg('--clip') } : {})
+      }))
+      break
+    case 'animate-text':
+      print(await tool('animate_text', {
+        text: arg('--text') || process.argv[3] || '标题',
+        preset: arg('--preset') || 'fade',
+        ...(arg('--start') ? { startMs: Number(arg('--start')) } : {}),
+        ...(arg('--ms') ? { durationMs: Number(arg('--ms')) } : {})
+      }))
+      break
+    case 'add-shape':
+      print(await tool('add_shape', { shape: process.argv[3] || 'rect', color: arg('--color') || '#e0a93a' }))
+      break
     case 'export':
       print(await tool('export', { preset: process.argv[3] || '1080p' }))
+      break
+    case 'render-queue-add':
+      print(await tool('render_queue_add', { preset: process.argv[3] || '1080p' }))
+      break
+    case 'make-proxy':
+      print(await tool('make_proxy', arg('--asset') ? { assetId: arg('--asset') } : {}))
       break
     case 'split-on-scenes':
       print(await tool('split_on_scenes'))

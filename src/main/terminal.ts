@@ -1,9 +1,9 @@
-import { app, BrowserWindow, ipcMain } from 'electron'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { homedir } from 'node:os'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { store } from './core'
+import { cliBinDir, extraBinPath, userDataDir } from './paths'
 
 interface Session {
   write: (data: string) => void
@@ -11,20 +11,17 @@ interface Session {
   kill: () => void
 }
 
-let session: Session | null = null
-let attached: BrowserWindow | null = null
+export type TerminalSink = { send: (channel: string, payload: unknown) => void }
 
-function cliBinDir(): string {
-  const candidates = [
-    join(app.getAppPath(), 'src/cli'),
-    join(process.cwd(), 'src/cli'),
-    join(__dirname, '../../src/cli')
-  ]
-  return candidates.find((p) => existsSync(join(p, 'cutstudio.mjs'))) ?? candidates[0]
+let session: Session | null = null
+let sink: TerminalSink | null = null
+
+export function setTerminalSink(next: TerminalSink | null): void {
+  sink = next
 }
 
 function zdotDir(): string {
-  const dir = join(app.getPath('userData'), 'terminal-zdot')
+  const dir = join(userDataDir(), 'terminal-zdot')
   mkdirSync(dir, { recursive: true })
   const bin = cliBinDir()
   writeFileSync(
@@ -52,7 +49,7 @@ function shellEnv(): NodeJS.ProcessEnv {
     ...process.env,
     TERM: 'xterm-256color',
     COLORTERM: 'truecolor',
-    PATH: `${bin}:${process.env.PATH ?? '/usr/bin:/bin'}`,
+    PATH: `${bin}:${extraBinPath()}:${process.env.PATH ?? '/usr/bin:/bin'}`,
     CUT_STUDIO_MCP_URL: `http://127.0.0.1:${store.settings.mcpPort || 4877}/mcp`,
     CUT_STUDIO_PROJECT: store.projectPath ?? '',
     ZDOTDIR: zdotDir(),
@@ -61,7 +58,7 @@ function shellEnv(): NodeJS.ProcessEnv {
 }
 
 function send(channel: string, payload: unknown): void {
-  if (attached && !attached.isDestroyed()) attached.webContents.send(channel, payload)
+  sink?.send(channel, payload)
 }
 
 async function spawnPty(cols: number, rows: number, cwd: string): Promise<Session> {
@@ -114,31 +111,27 @@ function spawnScript(_cols: number, _rows: number, cwd: string): Session {
   }
 }
 
-export function registerTerminalIpc(): void {
-  ipcMain.handle('terminal:start', async (e, cols: number, rows: number) => {
-    attached = BrowserWindow.fromWebContents(e.sender)
-    if (session) return { ok: true, reused: true }
-    const cwd = store.projectPath || homedir()
-    session = await spawnPty(Math.max(40, cols || 80), Math.max(10, rows || 24), cwd)
-    return { ok: true, reused: false, cwd, cli: cliBinDir() }
-  })
+export async function startTerminal(cols: number, rows: number): Promise<{ ok: boolean; reused: boolean; cwd: string; cli: string }> {
+  if (session) return { ok: true, reused: true, cwd: store.projectPath || homedir(), cli: cliBinDir() }
+  const cwd = store.projectPath || homedir()
+  session = await spawnPty(Math.max(40, cols || 80), Math.max(10, rows || 24), cwd)
+  return { ok: true, reused: false, cwd, cli: cliBinDir() }
+}
 
-  ipcMain.on('terminal:write', (_e, data: string) => {
-    session?.write(data)
-  })
+export function writeTerminal(data: string): void {
+  session?.write(data)
+}
 
-  ipcMain.on('terminal:resize', (_e, cols: number, rows: number) => {
-    session?.resize(Math.max(20, cols), Math.max(8, rows))
-  })
+export function resizeTerminal(cols: number, rows: number): void {
+  session?.resize(Math.max(20, cols), Math.max(8, rows))
+}
 
-  ipcMain.handle('terminal:restart', async (e, cols: number, rows: number) => {
-    session?.kill()
-    session = null
-    attached = BrowserWindow.fromWebContents(e.sender)
-    const cwd = store.projectPath || homedir()
-    session = await spawnPty(Math.max(40, cols || 80), Math.max(10, rows || 24), cwd)
-    return { ok: true, cwd }
-  })
+export async function restartTerminal(cols: number, rows: number): Promise<{ ok: boolean; cwd: string }> {
+  session?.kill()
+  session = null
+  const cwd = store.projectPath || homedir()
+  session = await spawnPty(Math.max(40, cols || 80), Math.max(10, rows || 24), cwd)
+  return { ok: true, cwd }
 }
 
 export function stopTerminal(): void {

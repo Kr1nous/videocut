@@ -1,9 +1,25 @@
+import { upsertKey } from '../shared/anim'
+import { beatScaleKeys, onsetTimes } from '../shared/audio'
+import { cubeFileText, defaultEffect, EFFECT_REGISTRY, effectSpec, makeLut } from '../shared/effects'
+import { packStorylineClips, sourceTimeMs } from '../shared/compose'
+import { defaultKey, isBlueKey, parseKeyColor } from '../shared/key'
+import { clampMask, defaultMask } from '../shared/mask'
+import { FADE_IN_KEYS } from '../shared/text'
 import { id } from '../shared/ids'
 import {
   type ActionResult,
+  type AnimProp,
   type AspectPreset,
+  type AudioLinkProp,
+  type BlendMode,
   type ClipFx,
+  type EaseKind,
+  type EffectType,
   type FilterName,
+  type MaskMode,
+  type MaskShape,
+  type ShapeKind,
+  type TextPreset,
   type Project,
   type ReviewAction,
   type SubtitleCue,
@@ -12,6 +28,7 @@ import {
   type TranscriptCue,
   type TransitionType,
   clipFx,
+  clipKind,
   timelineDurationMs
 } from '../shared/types'
 import type { ToolSpec } from './ai/providers'
@@ -32,16 +49,40 @@ export const ACTION_TOOLS: ToolSpec[] = [
   { name: 'normalize_loudness', description: '统一故事线音量。', parameters: { type: 'object', properties: {} } },
   { name: 'set_music', description: '铺背景音乐到全片。', parameters: { type: 'object', properties: { assetId: { type: 'string' }, volume: { type: 'number' } }, required: ['assetId'] } },
   { name: 'duck_music', description: '口播时压低音乐。enabled 默认 true，ratio 默认 0.28。', parameters: { type: 'object', properties: { enabled: { type: 'boolean' }, ratio: { type: 'number' } } } },
-  { name: 'set_transition', description: '给片段出点设转场：none | cross_dissolve | fade_black。', parameters: { type: 'object', properties: { clipId: { type: 'string' }, type: { type: 'string' }, durationMs: { type: 'number' } }, required: ['type'] } },
+  { name: 'set_transition', description: '给片段出点设转场：none | cross_dissolve | fade_black | fade_white | push。溶解/淡白/推会与下一段重叠。', parameters: { type: 'object', properties: { clipId: { type: 'string' }, type: { type: 'string' }, durationMs: { type: 'number' } }, required: ['type'] } },
   { name: 'fade_to_black', description: '片尾淡出黑。', parameters: { type: 'object', properties: { durationMs: { type: 'number' } } } },
   { name: 'fade_from_black', description: '片头淡入。', parameters: { type: 'object', properties: { durationMs: { type: 'number' } } } },
   { name: 'set_speed', description: '变速 0.25–8。会改时间线时长。', parameters: { type: 'object', properties: { clipId: { type: 'string' }, rate: { type: 'number' }, pitchPreserve: { type: 'boolean' } }, required: ['rate'] } },
   { name: 'crop', description: '裁切，x/y/w/h 为 0–1。', parameters: { type: 'object', properties: { clipId: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' } } } },
   { name: 'rotate', description: '旋转 0/90/180/270。', parameters: { type: 'object', properties: { clipId: { type: 'string' }, degrees: { type: 'number' } }, required: ['degrees'] } },
   { name: 'apply_filter', description: '滤镜 none|vivid|cinema|bw|vintage。', parameters: { type: 'object', properties: { clipId: { type: 'string' }, name: { type: 'string' } }, required: ['name'] } },
+  { name: 'list_effects', description: '列出可加特效：blur/radial_blur/glow/grain/mosaic/lut。', parameters: { type: 'object', properties: {}, additionalProperties: false } },
+  { name: 'add_effect', description: '给片段加特效（同类型会覆盖）。type: blur|radial_blur|glow|grain|mosaic|lut。amount 调强度。remove=true 去掉该类型。', parameters: { type: 'object', properties: { clipId: { type: 'string' }, type: { type: 'string' }, amount: { type: 'number' }, name: { type: 'string' }, path: { type: 'string' }, remove: { type: 'boolean' } }, required: ['type'] } },
+  { name: 'apply_lut', description: '套 LUT。name: warm|cool|contrast|green，或 path 指向 .cube。', parameters: { type: 'object', properties: { clipId: { type: 'string' }, name: { type: 'string' }, path: { type: 'string' } } } },
   { name: 'color_adjust', description: '曝光/对比/饱和/色温，范围大约 -1 到 1。', parameters: { type: 'object', properties: { clipId: { type: 'string' }, exposure: { type: 'number' }, contrast: { type: 'number' }, saturation: { type: 'number' }, warmth: { type: 'number' } } } },
-  { name: 'overlay_broll', description: 'B-roll 铺到叠加轨。', parameters: { type: 'object', properties: { assetId: { type: 'string' }, startMs: { type: 'number' }, durationMs: { type: 'number' } }, required: ['assetId'] } },
-  { name: 'export', description: '导出预设 1080p | 4k | shorts。', parameters: { type: 'object', properties: { preset: { type: 'string' } } } },
+  { name: 'overlay_broll', description: 'B-roll 画中画铺到叠加轨（右下角）。', parameters: { type: 'object', properties: { assetId: { type: 'string' }, startMs: { type: 'number' }, durationMs: { type: 'number' } }, required: ['assetId'] } },
+  { name: 'add_layer', description: '在故事线上方叠一层视频/图片，铺满画布。可与下层同时出现。', parameters: { type: 'object', properties: { assetId: { type: 'string' }, startMs: { type: 'number' }, durationMs: { type: 'number' }, blend: { type: 'string', enum: ['normal', 'add', 'screen', 'multiply'] } }, required: ['assetId'] } },
+  { name: 'set_blend', description: '图层混合：normal | add | screen | multiply。', parameters: { type: 'object', properties: { clipId: { type: 'string' }, mode: { type: 'string', enum: ['normal', 'add', 'screen', 'multiply'] } }, required: ['mode'] } },
+  { name: 'add_adjustment_layer', description: '调整层：滤镜/调色作用于下方全部画面。', parameters: { type: 'object', properties: { startMs: { type: 'number' }, durationMs: { type: 'number' }, filter: { type: 'string' }, saturation: { type: 'number' } } } },
+  { name: 'add_solid', description: '纯色层。color 为 #rrggbb，默认黑。', parameters: { type: 'object', properties: { color: { type: 'string' }, startMs: { type: 'number' }, durationMs: { type: 'number' }, blend: { type: 'string' } } } },
+  { name: 'add_text_layer', description: '文字图层，不写字幕轨。text 必填。可设 fontSize/color/stroke、x/y（0–1）。默认 3 秒居中。', parameters: { type: 'object', properties: { text: { type: 'string' }, startMs: { type: 'number' }, durationMs: { type: 'number' }, fontSize: { type: 'number' }, color: { type: 'string' }, stroke: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' } }, required: ['text'] } },
+  { name: 'animate_text', description: '一次生成可导出的标题。preset: fade|typewriter|lower_third。默认 3 秒。', parameters: { type: 'object', properties: { text: { type: 'string' }, preset: { type: 'string' }, startMs: { type: 'number' }, durationMs: { type: 'number' } }, required: ['text'] } },
+  { name: 'add_shape', description: '矩形或椭圆色块。shape: rect|ellipse。color 为 #rrggbb。width/height 为画面比例 0–1。', parameters: { type: 'object', properties: { shape: { type: 'string' }, color: { type: 'string' }, startMs: { type: 'number' }, durationMs: { type: 'number' }, width: { type: 'number' }, height: { type: 'number' }, x: { type: 'number' }, y: { type: 'number' } } } },
+  { name: 'set_text', description: '改文字层内容或样式。', parameters: { type: 'object', properties: { clipId: { type: 'string' }, text: { type: 'string' }, fontSize: { type: 'number' }, color: { type: 'string' }, stroke: { type: 'string' } } } },
+  { name: 'add_mask', description: '给片段加蒙版。shape: rect|ellipse，mode: add|subtract。x/y/w/h 为图层内 0–1，feather 0–0.4。', parameters: { type: 'object', properties: { clipId: { type: 'string' }, shape: { type: 'string' }, mode: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' }, feather: { type: 'number' } } } },
+  { name: 'set_mask', description: '改已有蒙版。要 maskId。', parameters: { type: 'object', properties: { clipId: { type: 'string' }, maskId: { type: 'string' }, shape: { type: 'string' }, mode: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' }, feather: { type: 'number' } }, required: ['maskId'] } },
+  { name: 'remove_mask', description: '删蒙版。不传 maskId 则清掉该片段全部蒙版。', parameters: { type: 'object', properties: { clipId: { type: 'string' }, maskId: { type: 'string' } } } },
+  { name: 'set_keyframe', description: '打关键帧。prop: opacity|scale|x|y|volume。atMs 为时间线毫秒，默认片段起点。ease: linear|ease_in|ease_out|ease_in_out。', parameters: { type: 'object', properties: { clipId: { type: 'string' }, prop: { type: 'string' }, atMs: { type: 'number' }, value: { type: 'number' }, ease: { type: 'string' } }, required: ['prop', 'value'] } },
+  { name: 'link_to_audio', description: '画面缩放/发光跟鼓点。prop: scale|glow|both。amount 0–1。remove=true 取消。', parameters: { type: 'object', properties: { clipId: { type: 'string' }, prop: { type: 'string' }, amount: { type: 'number' }, remove: { type: 'boolean' } } } },
+  { name: 'denoise_audio', description: '轻量降噪。amount 0–1。再调一次关闭。', parameters: { type: 'object', properties: { clipId: { type: 'string' }, amount: { type: 'number' }, enabled: { type: 'boolean' } } } },
+  { name: 'freeze_frame', description: '冻结画面。atMs 默认片段起点对应源帧。再调一次取消。', parameters: { type: 'object', properties: { clipId: { type: 'string' }, atMs: { type: 'number' } } } },
+  { name: 'reverse_clip', description: '倒放片段。再调一次恢复正放。', parameters: { type: 'object', properties: { clipId: { type: 'string' } } } },
+  { name: 'stabilize', description: '稳像（去手抖）。amount 0–1。再调一次关闭。enabled 可强制开/关。', parameters: { type: 'object', properties: { clipId: { type: 'string' }, amount: { type: 'number' }, enabled: { type: 'boolean' } } } },
+  { name: 'key_color', description: '绿/蓝幕抠像。color: green|blue|#rrggbb。tolerance 容差、spill 溢色、edge 边缘 0–1。remove=true 去掉。', parameters: { type: 'object', properties: { clipId: { type: 'string' }, color: { type: 'string' }, tolerance: { type: 'number' }, spill: { type: 'number' }, edge: { type: 'number' }, remove: { type: 'boolean' } } } },
+  { name: 'export', description: '立刻导出。preset: 1080p | 4k | shorts | alpha（透明 MOV）| prores。', parameters: { type: 'object', properties: { preset: { type: 'string' } } } },
+  { name: 'render_queue_add', description: '加入导出队列并开始渲染。preset: 1080p | 4k | shorts | alpha | prores。', parameters: { type: 'object', properties: { preset: { type: 'string' } } } },
+  { name: 'make_proxy', description: '为素材生成半分辨率代理，预览更流畅。不传 assetId 则全部视频/图片。', parameters: { type: 'object', properties: { assetId: { type: 'string' } } } },
+  { name: 'set_transform', description: '静态变换。scale 1=铺满画布，x/y 为图层中心 0–1。', parameters: { type: 'object', properties: { clipId: { type: 'string' }, scale: { type: 'number' }, x: { type: 'number' }, y: { type: 'number' } } } },
   { name: 'duplicate_clip', description: '复制当前或指定片段并接到后面。', parameters: { type: 'object', properties: { clipId: { type: 'string' } } } },
   { name: 'detach_audio', description: '画面静音，声音单独放到音频轨。', parameters: { type: 'object', properties: { clipId: { type: 'string' } } } },
   { name: 'split_on_scenes', description: '按镜头检测切开故事线。', parameters: { type: 'object', properties: {} } },
@@ -209,6 +250,7 @@ export async function runAction(
       store.pushUndo()
       const clips = clipId ? p.timeline.storyline.filter((c) => c.id === clipId) : p.timeline.storyline
       for (const c of clips) c.fx = { ...c.fx, transitionOut: { type, durationMs } }
+      packStorylineClips(p.timeline.storyline)
       store.log({ tool: name, summary: `转场 ${type}`, risk: 'low', source })
       await store.save()
       store.broadcast()
@@ -271,9 +313,54 @@ export async function runAction(
       await store.applyOps([{ op: 'patch_clip', clipId, fx: { filter } }], source, `滤镜 ${filter}`)
       return result(name, `滤镜 ${filter}`, [clipId])
     }
+    case 'list_effects':
+      return {
+        ...result(name, `${EFFECT_REGISTRY.length} 个特效`),
+        effects: EFFECT_REGISTRY.map((e) => ({ type: e.type, label: e.label, params: e.params }))
+      } as ActionResult
+    case 'add_effect': {
+      const clipId = String(args.clipId || selectedOrFirst(p))
+      const clip = findAny(p, clipId)
+      if (!clip) throw new Error('找不到片段')
+      const type = String(args.type) as EffectType
+      const spec = effectSpec(type)
+      if (!spec) throw new Error('未知特效')
+      const fx = clipFx(clip)
+      if (args.remove === true) {
+        const effects = fx.effects.filter((e) => e.type !== type)
+        await store.applyOps([{ op: 'patch_clip', clipId, fx: { effects } }], source, `去掉${spec.label}`)
+        return result(name, `已去掉${spec.label}`, [clipId])
+      }
+      const cur = defaultEffect(type, id('fx'))
+      if (args.amount != null) cur.params.amount = num(args.amount, Number(cur.params.amount))
+      if (typeof args.name === 'string') cur.params.name = args.name
+      if (typeof args.path === 'string') cur.params.path = args.path
+      const existing = fx.effects.find((e) => e.type === type)
+      const effects = existing
+        ? fx.effects.map((e) => (e.type === type ? { ...e, params: { ...e.params, ...cur.params } } : e))
+        : [...fx.effects, cur]
+      await store.applyOps([{ op: 'patch_clip', clipId, fx: { effects } }], source, spec.label)
+      return result(name, `已加${spec.label}`, [clipId])
+    }
+    case 'apply_lut': {
+      const clipId = String(args.clipId || selectedOrFirst(p))
+      let path = typeof args.path === 'string' ? args.path : ''
+      const lutName = String(args.name || (path ? 'custom' : 'warm'))
+      if (!path && (lutName === 'warm' || lutName === 'cool' || lutName === 'contrast' || lutName === 'green')) {
+        const { mkdir, writeFile } = await import('node:fs/promises')
+        const { join } = await import('node:path')
+        const { userDataDir } = await import('./paths')
+        const dir = join(userDataDir(), 'luts')
+        await mkdir(dir, { recursive: true })
+        path = join(dir, `${lutName}.cube`)
+        await writeFile(path, cubeFileText(makeLut(lutName)), 'utf8')
+      }
+      if (!path) throw new Error('需要 LUT 文件或 name=warm|cool|contrast|green')
+      return runAction('add_effect', { clipId, type: 'lut', name: lutName, path }, source)
+    }
     case 'color_adjust': {
       const clipId = String(args.clipId || selectedOrFirst(p))
-      const cur = clipFx(p.timeline.storyline.find((c) => c.id === clipId) ?? p.timeline.storyline[0] ?? emptyClip())
+      const cur = clipFx(findAny(p, clipId) ?? p.timeline.storyline[0] ?? p.timeline.overlays[0] ?? emptyClip())
       await store.applyOps(
         [
           {
@@ -309,10 +396,255 @@ export async function runAction(
       )
       return result(name, '已加 B-roll')
     }
+    case 'add_layer': {
+      const assetId = String(args.assetId)
+      const blend = String(args.blend || 'normal') as BlendMode
+      await store.applyOps(
+        [
+          {
+            op: 'add_layer',
+            assetId,
+            startMs: num(args.startMs, 0),
+            durationMs: args.durationMs != null ? num(args.durationMs, 5000) : undefined,
+            kind: 'footage',
+            blend: ['normal', 'add', 'screen', 'multiply'].includes(blend) ? blend : 'normal'
+          }
+        ],
+        source,
+        '叠加图层'
+      )
+      return result(name, '已叠加图层')
+    }
+    case 'set_blend': {
+      const clipId = String(args.clipId || selectedOrFirst(p))
+      const mode = String(args.mode || 'normal') as BlendMode
+      if (!['normal', 'add', 'screen', 'multiply'].includes(mode)) throw new Error('混合模式无效')
+      await store.applyOps([{ op: 'patch_clip', clipId, blend: mode }], source, `混合 ${mode}`)
+      return result(name, `混合 ${mode}`, [clipId])
+    }
+    case 'add_adjustment_layer': {
+      const startMs = num(args.startMs, 0)
+      const fx: Partial<ClipFx> = { opacity: 1 }
+      if (typeof args.filter === 'string') fx.filter = args.filter as FilterName
+      if (args.saturation != null) fx.color = { exposure: 0, contrast: 0, saturation: num(args.saturation, 0), warmth: 0 }
+      await store.applyOps(
+        [
+          {
+            op: 'add_layer',
+            startMs,
+            durationMs: args.durationMs != null ? num(args.durationMs, 5000) : undefined,
+            kind: 'adjustment',
+            fx
+          }
+        ],
+        source,
+        '加调整层'
+      )
+      return result(name, '已加调整层')
+    }
+    case 'add_solid': {
+      const color = String(args.color || '#000000')
+      const blend = String(args.blend || 'normal') as BlendMode
+      await store.applyOps(
+        [
+          {
+            op: 'add_layer',
+            startMs: num(args.startMs, 0),
+            durationMs: num(args.durationMs, 5000),
+            kind: 'solid',
+            solidColor: color.startsWith('#') ? color : `#${color}`,
+            blend: ['normal', 'add', 'screen', 'multiply'].includes(blend) ? blend : 'normal'
+          }
+        ],
+        source,
+        '加纯色层'
+      )
+      return result(name, '已加纯色层')
+    }
+    case 'add_text_layer': {
+      const text = String(args.text || '').trim()
+      if (!text) throw new Error('需要 text')
+      await store.applyOps(
+        [
+          {
+            op: 'add_layer',
+            startMs: num(args.startMs, 0),
+            durationMs: num(args.durationMs, 3000),
+            kind: 'text',
+            text: {
+              text,
+              font: 'PingFang SC',
+              fontSize: num(args.fontSize, 72),
+              color: String(args.color || '#ffffff'),
+              stroke: String(args.stroke || '#000000'),
+              strokeWidth: 3,
+              align: 'center'
+            },
+            fx: {
+              posX: args.x != null ? num(args.x, 0.5) : 0.5,
+              posY: args.y != null ? num(args.y, 0.45) : 0.45
+            }
+          }
+        ],
+        source,
+        `文字：${text.slice(0, 16)}`
+      )
+      return result(name, '已加文字层')
+    }
+    case 'animate_text': {
+      const text = String(args.text || '').trim()
+      if (!text) throw new Error('需要 text')
+      const preset = (['typewriter', 'fade', 'lower_third'].includes(String(args.preset)) ? String(args.preset) : 'fade') as TextPreset
+      const startMs = num(args.startMs, 0)
+      const durationMs = num(args.durationMs, 3000)
+      if (preset === 'lower_third') {
+        await store.applyOps(
+          [
+            {
+              op: 'add_layer',
+              startMs,
+              durationMs,
+              kind: 'shape',
+              shape: { shape: 'rect', fill: '#1c1c1e', width: 0.94, height: 0.16 },
+              fx: { posX: 0.5, posY: 0.88, keys: { opacity: FADE_IN_KEYS } }
+            },
+            {
+              op: 'add_layer',
+              startMs,
+              durationMs,
+              kind: 'text',
+              textAnim: 'lower_third',
+              text: {
+                text,
+                font: 'PingFang SC',
+                fontSize: 44,
+                color: '#ffffff',
+                stroke: '#000000',
+                strokeWidth: 2,
+                align: 'left'
+              },
+              fx: { posX: 0.1, posY: 0.88, keys: { opacity: FADE_IN_KEYS } }
+            }
+          ],
+          source,
+          `下三分之一：${text.slice(0, 16)}`
+        )
+      } else if (preset === 'typewriter') {
+        await store.applyOps(
+          [
+            {
+              op: 'add_layer',
+              startMs,
+              durationMs,
+              kind: 'text',
+              textAnim: 'typewriter',
+              text: {
+                text,
+                font: 'PingFang SC',
+                fontSize: 64,
+                color: '#ffffff',
+                stroke: '#000000',
+                strokeWidth: 3,
+                align: 'center'
+              },
+              fx: { posX: 0.5, posY: 0.45 }
+            }
+          ],
+          source,
+          `打字机：${text.slice(0, 16)}`
+        )
+      } else {
+        await store.applyOps(
+          [
+            {
+              op: 'add_layer',
+              startMs,
+              durationMs,
+              kind: 'text',
+              textAnim: 'fade',
+              text: {
+                text,
+                font: 'PingFang SC',
+                fontSize: 72,
+                color: '#ffffff',
+                stroke: '#000000',
+                strokeWidth: 3,
+                align: 'center'
+              },
+              fx: { posX: 0.5, posY: 0.45, keys: { opacity: FADE_IN_KEYS } }
+            }
+          ],
+          source,
+          `标题：${text.slice(0, 16)}`
+        )
+      }
+      return result(name, `已加${preset === 'typewriter' ? '打字机' : preset === 'lower_third' ? '下三分之一' : '淡入'}标题`)
+    }
+    case 'add_shape': {
+      const shape = (String(args.shape || 'rect') === 'ellipse' ? 'ellipse' : 'rect') as ShapeKind
+      const color = String(args.color || '#e0a93a')
+      await store.applyOps(
+        [
+          {
+            op: 'add_layer',
+            startMs: num(args.startMs, 0),
+            durationMs: num(args.durationMs, 3000),
+            kind: 'shape',
+            shape: {
+              shape,
+              fill: color.startsWith('#') ? color : `#${color}`,
+              width: num(args.width, shape === 'ellipse' ? 0.36 : 0.42),
+              height: num(args.height, shape === 'ellipse' ? 0.36 : 0.22)
+            },
+            fx: {
+              posX: args.x != null ? num(args.x, 0.5) : 0.5,
+              posY: args.y != null ? num(args.y, 0.5) : 0.5
+            }
+          }
+        ],
+        source,
+        shape === 'ellipse' ? '椭圆' : '矩形'
+      )
+      return result(name, '已加形状')
+    }
+    case 'set_text': {
+      const clipId = String(args.clipId || selectedOrFirst(p))
+      const clip = findAny(p, clipId)
+      if (!clip || clipKind(clip) !== 'text') throw new Error('请选中文字层')
+      const text = {
+        ...(clip.text ?? { text: '', font: 'PingFang SC', fontSize: 72, color: '#ffffff', stroke: '#000000', strokeWidth: 3, align: 'center' as const })
+      }
+      if (args.text != null) text.text = String(args.text)
+      if (args.fontSize != null) text.fontSize = num(args.fontSize, text.fontSize)
+      if (typeof args.color === 'string') text.color = args.color
+      if (typeof args.stroke === 'string') text.stroke = args.stroke
+      await store.applyOps([{ op: 'patch_clip', clipId, text }], source, '改文字')
+      return result(name, '已改文字', [clipId])
+    }
     case 'export': {
       const { exportTimeline } = await import('./media')
       const path = await exportTimeline(String(args.preset || '1080p'))
       return result(name, '已导出 ' + path)
+    }
+    case 'render_queue_add': {
+      const { addRenderJob } = await import('./render/export')
+      const job = await addRenderJob(String(args.preset || '1080p'))
+      const p2 = store.requireProject()
+      const done = (p2.renderQueue ?? []).filter((j) => j.status === 'done').length
+      const failed = (p2.renderQueue ?? []).filter((j) => j.status === 'error').length
+      return result(
+        name,
+        job.status === 'done'
+          ? `队列已导出 ${job.preset} → ${job.path}`
+          : job.status === 'error'
+            ? `队列失败：${job.error}`
+            : `已加入队列（完成 ${done}，失败 ${failed}）`
+      )
+    }
+    case 'make_proxy': {
+      const { makeProxy } = await import('./render/export')
+      const list = await makeProxy(args.assetId ? String(args.assetId) : undefined)
+      return result(name, `已生成 ${list.length} 个半分辨率代理`)
     }
     case 'duplicate_clip': {
       const clipId = String(args.clipId || selectedOrFirst(p))
@@ -323,13 +655,7 @@ export async function runAction(
       const list = listOf(p, clipId)
       const idx = list.findIndex((c) => c.id === clipId)
       list.splice(idx + 1, 0, copy)
-      if (list === p.timeline.storyline) {
-        let t = 0
-        for (const c of list) {
-          c.startMs = t
-          t += c.durationMs
-        }
-      }
+      if (list === p.timeline.storyline) packStorylineClips(list)
       store.log({ tool: name, summary: '复制片段', risk: 'low', source })
       await store.save()
       store.broadcast()
@@ -448,6 +774,17 @@ export async function runAction(
       await store.applyOps([{ op: 'patch_clip', clipId, fx: { opacity: Math.min(1, Math.max(0, num(args.opacity, 1))) } }], source, '透明度')
       return result(name, '已改透明度', [clipId])
     }
+    case 'set_transform': {
+      const clipId = String(args.clipId || selectedOrFirst(p))
+      const clip = findAny(p, clipId)
+      const cur = clipFx(clip ?? emptyClip())
+      const fx: Partial<ClipFx> = {}
+      if (args.scale != null) fx.scale = Math.min(4, Math.max(0.05, num(args.scale, cur.scale)))
+      if (args.x != null) fx.posX = Math.min(1, Math.max(0, num(args.x, cur.posX)))
+      if (args.y != null) fx.posY = Math.min(1, Math.max(0, num(args.y, cur.posY)))
+      await store.applyOps([{ op: 'patch_clip', clipId, fx }], source, '变换')
+      return result(name, '已改变换', [clipId])
+    }
     case 'audio_preset': {
       const clipId = String(args.clipId || selectedOrFirst(p))
       const preset = String(args.name)
@@ -520,10 +857,210 @@ export async function runAction(
     }
     case 'jump_cut':
       return runAction('remove_silence', { minMs: 220, padMs: 50 }, source)
+    case 'add_mask': {
+      const clipId = String(args.clipId || selectedOrFirst(p))
+      const clip = findAny(p, clipId)
+      if (!clip) throw new Error('找不到片段')
+      const shape: MaskShape = args.shape === 'rect' ? 'rect' : 'ellipse'
+      const mode: MaskMode = args.mode === 'subtract' ? 'subtract' : 'add'
+      const base = defaultMask(shape, mode, id('mask'))
+      const mask = clampMask({
+        ...base,
+        x: args.x != null ? num(args.x, base.x) : base.x,
+        y: args.y != null ? num(args.y, base.y) : base.y,
+        w: args.w != null ? num(args.w, base.w) : base.w,
+        h: args.h != null ? num(args.h, base.h) : base.h,
+        feather: args.feather != null ? num(args.feather, base.feather) : base.feather
+      })
+      await store.applyOps([{ op: 'patch_clip', clipId, fx: { masks: [...clipFx(clip).masks, mask] } }], source, '加蒙版')
+      return result(name, `${shape === 'ellipse' ? '椭圆' : '矩形'}蒙版`, [clipId])
+    }
+    case 'set_mask': {
+      const clipId = String(args.clipId || selectedOrFirst(p))
+      const clip = findAny(p, clipId)
+      if (!clip) throw new Error('找不到片段')
+      const maskId = String(args.maskId)
+      const masks = clipFx(clip).masks.map((m) => {
+        if (m.id !== maskId) return m
+        return clampMask({
+          ...m,
+          shape: args.shape === 'rect' || args.shape === 'ellipse' ? args.shape : m.shape,
+          mode: args.mode === 'add' || args.mode === 'subtract' ? args.mode : m.mode,
+          x: args.x != null ? num(args.x, m.x) : m.x,
+          y: args.y != null ? num(args.y, m.y) : m.y,
+          w: args.w != null ? num(args.w, m.w) : m.w,
+          h: args.h != null ? num(args.h, m.h) : m.h,
+          feather: args.feather != null ? num(args.feather, m.feather) : m.feather
+        })
+      })
+      if (!masks.some((m) => m.id === maskId)) throw new Error('找不到蒙版')
+      await store.applyOps([{ op: 'patch_clip', clipId, fx: { masks } }], source, '改蒙版')
+      return result(name, '已改蒙版', [clipId])
+    }
+    case 'remove_mask': {
+      const clipId = String(args.clipId || selectedOrFirst(p))
+      const clip = findAny(p, clipId)
+      if (!clip) throw new Error('找不到片段')
+      const maskId = args.maskId != null ? String(args.maskId) : ''
+      const masks = maskId ? clipFx(clip).masks.filter((m) => m.id !== maskId) : []
+      await store.applyOps([{ op: 'patch_clip', clipId, fx: { masks } }], source, '删蒙版')
+      return result(name, maskId ? '已删蒙版' : '已清除蒙版', [clipId])
+    }
+    case 'set_keyframe': {
+      const clipId = String(args.clipId || selectedOrFirst(p))
+      const clip = findAny(p, clipId)
+      if (!clip) throw new Error('找不到片段')
+      const rawProp = String(args.prop || 'opacity')
+      const prop: AnimProp = rawProp === 'x' ? 'posX' : rawProp === 'y' ? 'posY' : (rawProp as AnimProp)
+      if (!['opacity', 'scale', 'posX', 'posY', 'volume'].includes(prop)) throw new Error('prop 必须是 opacity|scale|x|y|volume')
+      const fx = clipFx(clip)
+      const at = args.atMs != null ? num(args.atMs, clip.startMs) : clip.startMs
+      const t = clip.durationMs > 0 ? (at - clip.startMs) / clip.durationMs : 0
+      const ease = (['linear', 'ease_in', 'ease_out', 'ease_in_out'].includes(String(args.ease))
+        ? String(args.ease)
+        : 'ease_in_out') as EaseKind
+      const seed =
+        prop === 'volume' ? clip.volume : prop === 'opacity' ? fx.opacity : prop === 'scale' ? fx.scale : prop === 'posX' ? fx.posX : fx.posY
+      let value = num(args.value, seed)
+      if (prop === 'opacity') value = Math.min(1, Math.max(0, value))
+      if (prop === 'scale') value = Math.min(4, Math.max(0.05, value))
+      if (prop === 'posX' || prop === 'posY') value = Math.min(1, Math.max(0, value))
+      if (prop === 'volume') value = Math.min(2, Math.max(0, value))
+      const track = upsertKey(fx.keys?.[prop], t, value, ease, seed)
+      await store.applyOps([{ op: 'patch_clip', clipId, fx: { keys: { ...fx.keys, [prop]: track } } }], source, '关键帧')
+      return result(name, `${prop} 关键帧`, [clipId])
+    }
+    case 'freeze_frame': {
+      const clipId = String(args.clipId || selectedOrFirst(p))
+      const clip = findAny(p, clipId)
+      if (!clip) throw new Error('找不到片段')
+      const fx = clipFx(clip)
+      if (fx.freeze) {
+        await store.applyOps([{ op: 'patch_clip', clipId, fx: { freeze: false } }], source, '取消冻结')
+        return result(name, '已取消冻结', [clipId])
+      }
+      const at = args.atMs != null ? num(args.atMs, clip.startMs) : clip.startMs
+      await store.applyOps(
+        [{ op: 'patch_clip', clipId, fx: { freeze: true, freezeAtMs: sourceTimeMs(clip, at), reverse: false } }],
+        source,
+        '冻结帧'
+      )
+      return result(name, '已冻结画面', [clipId])
+    }
+    case 'reverse_clip': {
+      const clipId = String(args.clipId || selectedOrFirst(p))
+      const clip = findAny(p, clipId)
+      if (!clip) throw new Error('找不到片段')
+      const on = !clipFx(clip).reverse
+      await store.applyOps([{ op: 'patch_clip', clipId, fx: { reverse: on, freeze: on ? false : clipFx(clip).freeze } }], source, on ? '倒放' : '正放')
+      return result(name, on ? '已倒放' : '已正放', [clipId])
+    }
+    case 'stabilize': {
+      const clipId = String(args.clipId || selectedOrFirst(p))
+      const clip = findAny(p, clipId)
+      if (!clip) throw new Error('找不到片段')
+      const cur = clipFx(clip).stabilize
+      const enabled = args.enabled != null ? Boolean(args.enabled) : !cur?.enabled
+      const amount = Math.min(1, Math.max(0, args.amount != null ? num(args.amount, 0.5) : (cur?.amount ?? 0.5)))
+      await store.applyOps(
+        [{ op: 'patch_clip', clipId, fx: { stabilize: { enabled, amount } } }],
+        source,
+        enabled ? '稳像' : '取消稳像'
+      )
+      return result(name, enabled ? `已稳像 ${Math.round(amount * 100)}%` : '已取消稳像', [clipId])
+    }
+    case 'key_color': {
+      const clipId = String(args.clipId || selectedOrFirst(p))
+      const clip = findAny(p, clipId)
+      if (!clip) throw new Error('找不到片段')
+      if (args.remove === true || String(args.color || '') === 'none') {
+        await store.applyOps([{ op: 'patch_clip', clipId, fx: { key: null } }], source, '去掉抠像')
+        return result(name, '已去掉抠像', [clipId])
+      }
+      const prev = clipFx(clip).key ?? defaultKey(String(args.color || 'green'))
+      const key = {
+        color: parseKeyColor(String(args.color || prev.color || 'green')),
+        tolerance: Math.min(1, Math.max(0.01, args.tolerance != null ? num(args.tolerance, prev.tolerance) : prev.tolerance)),
+        spill: Math.min(1, Math.max(0, args.spill != null ? num(args.spill, prev.spill) : prev.spill)),
+        edge: Math.min(1, Math.max(0, args.edge != null ? num(args.edge, prev.edge) : prev.edge))
+      }
+      await store.applyOps([{ op: 'patch_clip', clipId, fx: { key } }], source, '抠像')
+      return result(name, `已抠${isBlueKey(key.color) ? '蓝' : '绿'}幕`, [clipId])
+    }
+    case 'link_to_audio': {
+      const clipId = String(args.clipId || selectedOrFirst(p))
+      const clip = findAny(p, clipId)
+      if (!clip) throw new Error('找不到片段')
+      if (args.remove === true) {
+        await store.applyOps([{ op: 'patch_clip', clipId, fx: { audioLink: null } }], source, '取消跟鼓点')
+        return result(name, '已取消跟鼓点', [clipId])
+      }
+      const audioClip = p.timeline.audio[0] ?? p.timeline.storyline[0]
+      if (!audioClip) throw new Error('没有可跟随的音频')
+      const asset = p.assets.find((a) => a.id === audioClip.assetId)
+      if (!asset?.path) throw new Error('找不到音频素材')
+      let peaks = asset.index?.waveform
+      if (!peaks?.length) {
+        const { findFfmpeg } = await import('./render/ffmpeg')
+        const { readWaveform } = await import('./render/wave')
+        const ffmpeg = await findFfmpeg()
+        if (!ffmpeg) throw new Error('没有 ffmpeg，无法分析鼓点')
+        peaks = await readWaveform(ffmpeg, asset.path)
+        asset.index = {
+          silence: asset.index?.silence ?? [],
+          speech: asset.index?.speech ?? [],
+          scenes: asset.index?.scenes ?? [],
+          peakRms: asset.index?.peakRms ?? 0,
+          waveform: peaks
+        }
+      }
+      const onsets = onsetTimes(peaks, asset.durationMs || audioClip.durationMs)
+      if (!onsets.length) throw new Error('没检测到鼓点，换一段节奏更明显的音频')
+      const fx = clipFx(clip)
+      const prop = (['scale', 'glow', 'both'].includes(String(args.prop)) ? String(args.prop) : 'both') as AudioLinkProp
+      const amount = Math.min(1, Math.max(0.08, num(args.amount, 0.45)))
+      const scaleKeys = beatScaleKeys(onsets, audioClip, clip, amount, fx.scale || 1)
+      const effects =
+        prop === 'glow' || prop === 'both'
+          ? fx.effects.some((e) => e.type === 'glow')
+            ? fx.effects
+            : [...fx.effects, defaultEffect('glow', id('fx'))]
+          : fx.effects
+      await store.applyOps(
+        [
+          {
+            op: 'patch_clip',
+            clipId,
+            fx: {
+              audioLink: { prop, amount },
+              keys: { ...fx.keys, scale: scaleKeys },
+              effects
+            }
+          }
+        ],
+        source,
+        '跟鼓点'
+      )
+      return result(name, `已跟鼓点（${onsets.length} 下）`, [clipId])
+    }
+    case 'denoise_audio': {
+      const clipId = String(args.clipId || selectedOrFirst(p))
+      const clip = findAny(p, clipId)
+      if (!clip) throw new Error('找不到片段')
+      const cur = clipFx(clip).denoise
+      const enabled = args.enabled != null ? Boolean(args.enabled) : !cur?.enabled
+      const amount = Math.min(1, Math.max(0, args.amount != null ? num(args.amount, 0.5) : (cur?.amount ?? 0.5)))
+      await store.applyOps(
+        [{ op: 'patch_clip', clipId, fx: { denoise: { enabled, amount } } }],
+        source,
+        enabled ? '降噪' : '取消降噪'
+      )
+      return result(name, enabled ? '已降噪' : '已取消降噪', [clipId])
+    }
     case 'reset_fx': {
       const clipId = String(args.clipId || selectedOrFirst(p))
       await store.applyOps(
-        [{ op: 'patch_clip', clipId, fx: { speed: 1, filter: 'none', crop: null, rotate: 0, flipX: false, opacity: 1, color: { exposure: 0, contrast: 0, saturation: 0, warmth: 0 } } }],
+        [{ op: 'patch_clip', clipId, fx: { speed: 1, filter: 'none', crop: null, rotate: 0, flipX: false, flipY: false, opacity: 1, scale: 1, posX: 0.5, posY: 0.5, fadeInMs: 0, fadeOutMs: 0, color: { exposure: 0, contrast: 0, saturation: 0, warmth: 0 }, transitionOut: { type: 'none', durationMs: 0 }, masks: [], effects: [], keys: {}, reverse: false, freeze: false, stabilize: { enabled: false, amount: 0.5 }, key: null, audioLink: null, denoise: null } }],
         source,
         '重置效果'
       )
@@ -609,7 +1146,7 @@ function emptyClip(): TimelineClip {
 }
 
 function selectedOrFirst(p: Project): string {
-  const c = p.timeline.storyline[0]
+  const c = p.timeline.storyline[0] ?? p.timeline.overlays[0]
   if (!c) throw new Error('时间线是空的')
   return c.id
 }
@@ -673,11 +1210,7 @@ async function fitDuration(source: ReviewAction['source'], targetMs: number): Pr
     c.fx = { ...c.fx, speed: fx.speed * rate }
     c.durationMs = Math.max(1, (c.outMs - c.inMs) / (c.fx.speed ?? 1))
   }
-  let t = 0
-  for (const c of p.timeline.storyline) {
-    c.startMs = t
-    t += c.durationMs
-  }
+  packStorylineClips(p.timeline.storyline)
   store.log({ tool: 'fit_duration', summary: `压到约 ${Math.round(targetMs / 1000)} 秒`, risk: 'medium', source })
   await store.save()
   store.broadcast()
