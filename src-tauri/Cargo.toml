@@ -2,7 +2,7 @@
 name = "cutstudio"
 version = "1.1.0"
 description = "剪辑台"
-authors = ["Kr1nous <https://github.com/Kr1nous>"]
+authors = ["Kr1nous <https://github.com/Kr1nous>", "Grok <https://x.ai>"]
 edition = "2021"
 
 [build-dependencies]
