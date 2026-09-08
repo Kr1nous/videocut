@@ -1,8 +1,8 @@
 [package]
 name = "cutstudio"
-version = "1.0.0"
+version = "1.1.0"
 description = "剪辑台"
-authors = ["Kr1nous"]
+authors = ["Kr1nous <https://github.com/Kr1nous>"]
 edition = "2021"
 
 [build-dependencies]

@@ -64,6 +64,69 @@ export async function probeHasAudio(ffprobe: string, path: string): Promise<bool
   }
 }
 
+export type MediaProbe = { durationMs: number; width: number; height: number; fps: number }
+
+function parseRate(raw?: string): number {
+  if (!raw || raw === '0/0') return 0
+  const [a, b] = raw.split('/').map(Number)
+  if (!b) return Number.isFinite(a) ? a : 0
+  const n = a / b
+  return Number.isFinite(n) ? n : 0
+}
+
+export async function probeMedia(path: string): Promise<MediaProbe> {
+  const empty: MediaProbe = { durationMs: 0, width: 0, height: 0, fps: 0 }
+  const ffmpeg = await findFfmpeg()
+  if (!ffmpeg) return empty
+  const ffprobe = await findFfprobe(ffmpeg)
+  const r = await runFfmpeg(ffprobe, [
+    '-v',
+    'error',
+    '-print_format',
+    'json',
+    '-show_entries',
+    'format=duration:stream=width,height,avg_frame_rate,codec_type',
+    path
+  ])
+  if (r.code !== 0 || r.stdout.length < 2) return empty
+  try {
+    const json = JSON.parse(r.stdout.toString()) as {
+      format?: { duration?: string }
+      streams?: Array<{ codec_type?: string; width?: number; height?: number; avg_frame_rate?: string }>
+    }
+    const durationMs = Math.round(Number(json.format?.duration || 0) * 1000)
+    const video = json.streams?.find((s) => s.codec_type === 'video' && (s.width || 0) > 0)
+    return {
+      durationMs: Number.isFinite(durationMs) ? Math.max(0, durationMs) : 0,
+      width: video?.width || 0,
+      height: video?.height || 0,
+      fps: parseRate(video?.avg_frame_rate)
+    }
+  } catch {
+    return empty
+  }
+}
+
+export async function writeThumb(src: string, dest: string, atSec = 0.4): Promise<boolean> {
+  const ffmpeg = await findFfmpeg()
+  if (!ffmpeg) return false
+  const r = await runFfmpeg(ffmpeg, [
+    '-y',
+    '-ss',
+    Math.max(0, atSec).toFixed(3),
+    '-i',
+    src,
+    '-frames:v',
+    '1',
+    '-vf',
+    'scale=320:-2',
+    '-q:v',
+    '4',
+    dest
+  ])
+  return r.code === 0
+}
+
 export async function probeHasVideo(ffprobe: string, path: string): Promise<boolean> {
   try {
     const r = await runFfmpeg(ffprobe, [

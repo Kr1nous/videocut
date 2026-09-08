@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fxAt, sampleKeys } from '../../shared/anim'
 import { beatScaleKeys, denoiseFfmpeg, downsamplePeaks, envelopeAt, volumeAt } from '../../shared/audio'
-import { packStorylineClips, dissolveOverlapMs, layersAt, opacityAt, overlayLanes } from '../../shared/compose'
+import { packStorylineClips, dissolveOverlapMs, layersAt, opacityAt, overlayLanes, aspectFromSize, applySourceFrame } from '../../shared/compose'
 import { cubeFileText, makeLut, simpleEffectFfmpeg, xfadeName } from '../../shared/effects'
 import { keyFfmpeg, stabilizeFfmpeg } from '../../shared/key'
 import {
@@ -145,6 +145,9 @@ function unitTests(): void {
   assert(videoEncodeArgs('1080p').includes('libx264'), 'h264 args')
   assert(videoEncodeArgs('alpha').some((s) => s.includes('yuva') || s === '4444'), 'alpha args')
   assert(videoEncodeArgs('prores').includes('yuv422p10le'), 'prores args')
+  assert(aspectFromSize(1080, 1920) === '9:16' && aspectFromSize(1920, 1080) === '16:9', 'aspect from size')
+  const st = { ...DEFAULT_PROJECT_SETTINGS }
+  assert(applySourceFrame(st, 1080, 1920) && st.width === 1080 && st.height === 1920, 'adopt source frame')
   console.log('unit: pack / opacity / dissolve / overlay lanes / mask / keys / effects / key-stab / audio / export ok')
 }
 

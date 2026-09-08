@@ -1,4 +1,4 @@
-import { convertFileSrc, invoke } from '@tauri-apps/api/core'
+import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { desktopDir, documentDir, downloadDir, videoDir } from '@tauri-apps/api/path'
 import { ask, message, open, save } from '@tauri-apps/plugin-dialog'
@@ -137,6 +137,7 @@ export const cutApi = {
   importPaths: (paths: string[]) => api('POST', '/media/import', { paths }),
   deleteAsset: (assetId: string) => api('POST', '/media/delete', { assetId }),
   updateAssetMeta: (assetId: string, meta: object) => api('POST', '/media/updateMeta', { assetId, meta }),
+  probeAsset: (assetId: string) => api('POST', '/media/probe', { assetId }),
   saveThumb: (assetId: string, dataUrl: string) => api('POST', '/media/thumb', { assetId, dataUrl }),
   exportTimeline: async (preset?: string) => {
     const r = await api<{ path: string }>('POST', '/media/export', { preset })
@@ -246,12 +247,5 @@ export async function installCutApi(): Promise<void> {
 
 export function mediaSrc(filePath: string): string {
   if (!filePath) return ''
-  if (isTauri()) {
-    try {
-      return convertFileSrc(filePath)
-    } catch {
-      /* fall through */
-    }
-  }
   return `${API}/file?path=${encodeURIComponent(filePath)}`
 }

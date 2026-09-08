@@ -80,14 +80,46 @@ export function applyCanvasMask(ctx: CanvasRenderingContext2D, w: number, h: num
   ctx.restore()
 }
 
+export function clampScale(n: number): number {
+  return Math.min(8, Math.max(0.05, n))
+}
+
+export function axisScale(fx: ClipFx): { x: number; y: number } {
+  const s = clampScale(fx.scale || 1)
+  return { x: clampScale(fx.scaleX ?? s), y: clampScale(fx.scaleY ?? s) }
+}
+
+/** 源画面完整放入画布、不裁切时的尺寸。 */
+export function containBase(
+  canvasW: number,
+  canvasH: number,
+  srcW: number,
+  srcH: number
+): { w: number; h: number } {
+  const sw = Math.max(1, srcW)
+  const sh = Math.max(1, srcH)
+  const fit = Math.min(canvasW / sw, canvasH / sh)
+  return { w: sw * fit, h: sh * fit }
+}
+
 export function layerBox(
   fx: ClipFx,
   canvasW: number,
-  canvasH: number
+  canvasH: number,
+  srcW = 0,
+  srcH = 0
 ): { x: number; y: number; w: number; h: number } {
-  const scale = Math.min(4, Math.max(0.05, fx.scale || 1))
-  const w = canvasW * scale
-  const h = canvasH * scale
+  const { x: sx, y: sy } = axisScale(fx)
+  let w: number
+  let h: number
+  if (srcW > 0 && srcH > 0) {
+    const base = containBase(canvasW, canvasH, srcW, srcH)
+    w = Math.max(2, base.w * sx)
+    h = Math.max(2, base.h * sy)
+  } else {
+    w = Math.max(2, canvasW * sx)
+    h = Math.max(2, canvasH * sy)
+  }
   return { x: fx.posX * canvasW - w / 2, y: fx.posY * canvasH - h / 2, w, h }
 }
 

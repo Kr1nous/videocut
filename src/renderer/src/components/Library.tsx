@@ -80,10 +80,10 @@ export function Library({
               >
                 {a.thumbPath ? (
                   <img src={mediaUrl(a.thumbPath)} alt="" />
-                ) : a.kind === 'video' ? (
-                  <video src={mediaUrl(a.path)} muted />
                 ) : a.kind === 'image' ? (
                   <img src={mediaUrl(a.path)} alt="" />
+                ) : a.kind === 'video' ? (
+                  '视频'
                 ) : (
                   a.kind
                 )}

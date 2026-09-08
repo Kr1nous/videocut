@@ -22,12 +22,12 @@ export const FILTER_LOOK: Record<FilterName, FilterLook> = {
 
 export function colorCss(fx: ClipFx): string {
   const c = fx.color
-  return [
-    `brightness(${1 + c.exposure * 0.4})`,
-    `contrast(${1 + c.contrast * 0.4})`,
-    `saturate(${1 + c.saturation * 0.5})`,
-    `hue-rotate(${c.warmth * 18}deg)`
-  ].join(' ')
+  const bits: string[] = []
+  if (Math.abs(c.exposure) > 0.001) bits.push(`brightness(${1 + c.exposure * 0.4})`)
+  if (Math.abs(c.contrast) > 0.001) bits.push(`contrast(${1 + c.contrast * 0.4})`)
+  if (Math.abs(c.saturation) > 0.001) bits.push(`saturate(${1 + c.saturation * 0.5})`)
+  if (Math.abs(c.warmth) > 0.001) bits.push(`hue-rotate(${c.warmth * 18}deg)`)
+  return bits.join(' ')
 }
 
 export function colorFfmpeg(fx: ClipFx): string[] {

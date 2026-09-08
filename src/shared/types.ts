@@ -135,8 +135,12 @@ export interface ClipFx {
   rotate: 0 | 90 | 180 | 270
   flipX: boolean
   flipY: boolean
-  /** 1 = 铺满画布（cover）。 */
+  /** 1 = 原素材完整放入画布（contain）。可与 scaleX/scaleY 分开。 */
   scale: number
+  /** 相对「完整放入」后的宽度，缺省用 scale。 */
+  scaleX?: number
+  /** 相对「完整放入」后的高度，缺省用 scale。 */
+  scaleY?: number
   /** 图层中心，0–1，0.5 为画面中心。 */
   posX: number
   posY: number
@@ -254,6 +258,8 @@ export interface ProjectSettings {
   fps: number
   sampleRate: number
   aspect?: AspectPreset
+  /** 用户点过画幅按钮后，不再跟导入素材改画布。 */
+  manualFrame?: boolean
 }
 
 export type ExportPreset = '1080p' | '4k' | 'shorts' | 'alpha' | 'prores'

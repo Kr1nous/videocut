@@ -1,7 +1,9 @@
 import { copyFile, mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import { basename, extname, join } from 'node:path'
 import { id, nowIso } from '../shared/ids'
-import { packStorylineClips } from '../shared/compose'
+import { applySourceFrame, packStorylineClips, shouldAdoptSourceFrame } from '../shared/compose'
+import { probeMedia, writeThumb } from './render/ffmpeg'
+import { analyzeMediaFile } from './render/wave'
 import {
   type AppSettings,
   type MediaAsset,
@@ -237,6 +239,8 @@ export class ProjectStore {
   async importFiles(filePaths: string[]): Promise<MediaAsset[]> {
     const project = this.requireProject()
     if (!this.projectPath) throw new Error('项目路径丢失')
+    await mkdir(join(this.projectPath, 'media'), { recursive: true })
+    await mkdir(join(this.projectPath, 'thumbs'), { recursive: true })
     const imported: MediaAsset[] = []
     for (const src of filePaths) {
       const kind = kindFromExt(extname(src))
@@ -245,18 +249,34 @@ export class ProjectStore {
       const destName = `${assetId}${extname(src).toLowerCase()}`
       const dest = join(this.projectPath, 'media', destName)
       await copyFile(src, dest)
+      const probed = await probeMedia(dest)
       const asset: MediaAsset = {
         id: assetId,
         name: basename(src),
         path: dest,
         kind,
-        durationMs: kind === 'image' ? 5000 : 0,
-        width: 0,
-        height: 0,
-        fps: project.settings.fps,
+        durationMs: probed.durationMs || (kind === 'image' ? 5000 : 0),
+        width: probed.width,
+        height: probed.height,
+        fps: probed.fps || project.settings.fps,
         importedAt: nowIso()
       }
+      if (kind === 'video') {
+        const thumb = join(this.projectPath, 'thumbs', `${assetId}.jpg`)
+        const at = Math.min(1, Math.max(0.05, (asset.durationMs || 1000) / 3000))
+        if (await writeThumb(dest, thumb, at)) asset.thumbPath = thumb
+      }
+      if (kind === 'video' || kind === 'audio') {
+        try {
+          asset.index = await analyzeMediaFile(dest, asset.durationMs)
+        } catch {
+          /* waveform is best-effort */
+        }
+      }
       project.assets.push(asset)
+      if ((kind === 'video' || kind === 'image') && asset.width && asset.height && shouldAdoptSourceFrame(project)) {
+        applySourceFrame(project.settings, asset.width, asset.height)
+      }
       imported.push(asset)
     }
     this.log({

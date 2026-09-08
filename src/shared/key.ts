@@ -66,7 +66,12 @@ export function applyKeyCanvas(ctx: CanvasRenderingContext2D, w: number, h: numb
   const blend = clamp01(k.edge)
   const spill = clamp01(k.spill)
   const blue = isBlueKey(k.color)
-  const img = ctx.getImageData(0, 0, w, h)
+  let img: ImageData
+  try {
+    img = ctx.getImageData(0, 0, w, h)
+  } catch {
+    return
+  }
   const d = img.data
   for (let i = 0; i < d.length; i += 4) {
     const dr = d[i] - kr

@@ -82,7 +82,7 @@ export const ACTION_TOOLS: ToolSpec[] = [
   { name: 'export', description: '立刻导出。preset: 1080p | 4k | shorts | alpha（透明 MOV）| prores。', parameters: { type: 'object', properties: { preset: { type: 'string' } } } },
   { name: 'render_queue_add', description: '加入导出队列并开始渲染。preset: 1080p | 4k | shorts | alpha | prores。', parameters: { type: 'object', properties: { preset: { type: 'string' } } } },
   { name: 'make_proxy', description: '为素材生成半分辨率代理，预览更流畅。不传 assetId 则全部视频/图片。', parameters: { type: 'object', properties: { assetId: { type: 'string' } } } },
-  { name: 'set_transform', description: '静态变换。scale 1=铺满画布，x/y 为图层中心 0–1。', parameters: { type: 'object', properties: { clipId: { type: 'string' }, scale: { type: 'number' }, x: { type: 'number' }, y: { type: 'number' } } } },
+  { name: 'set_transform', description: '静态变换。scale 1=原素材完整放入画布。scaleX/scaleY 可分开改宽高。x/y 为图层中心 0–1。', parameters: { type: 'object', properties: { clipId: { type: 'string' }, scale: { type: 'number' }, scaleX: { type: 'number' }, scaleY: { type: 'number' }, x: { type: 'number' }, y: { type: 'number' } } } },
   { name: 'duplicate_clip', description: '复制当前或指定片段并接到后面。', parameters: { type: 'object', properties: { clipId: { type: 'string' } } } },
   { name: 'detach_audio', description: '画面静音，声音单独放到音频轨。', parameters: { type: 'object', properties: { clipId: { type: 'string' } } } },
   { name: 'split_on_scenes', description: '按镜头检测切开故事线。', parameters: { type: 'object', properties: {} } },
@@ -167,6 +167,7 @@ export async function runAction(
       store.pushUndo()
       const aspect = String(args.aspect) as AspectPreset
       p.settings.aspect = aspect
+      p.settings.manualFrame = true
       if (aspect === '16:9') {
         p.settings.width = 1920
         p.settings.height = 1080
@@ -778,10 +779,20 @@ export async function runAction(
       const clipId = String(args.clipId || selectedOrFirst(p))
       const clip = findAny(p, clipId)
       const cur = clipFx(clip ?? emptyClip())
+      const clampS = (n: number) => Math.min(8, Math.max(0.05, n))
+      const clampP = (n: number) => Math.min(2, Math.max(-1, n))
       const fx: Partial<ClipFx> = {}
-      if (args.scale != null) fx.scale = Math.min(4, Math.max(0.05, num(args.scale, cur.scale)))
-      if (args.x != null) fx.posX = Math.min(1, Math.max(0, num(args.x, cur.posX)))
-      if (args.y != null) fx.posY = Math.min(1, Math.max(0, num(args.y, cur.posY)))
+      if (args.scale != null) {
+        fx.scale = clampS(num(args.scale, cur.scale))
+        if (args.scaleX == null && args.scaleY == null) {
+          fx.scaleX = fx.scale
+          fx.scaleY = fx.scale
+        }
+      }
+      if (args.scaleX != null) fx.scaleX = clampS(num(args.scaleX, cur.scaleX ?? cur.scale))
+      if (args.scaleY != null) fx.scaleY = clampS(num(args.scaleY, cur.scaleY ?? cur.scale))
+      if (args.x != null) fx.posX = clampP(num(args.x, cur.posX))
+      if (args.y != null) fx.posY = clampP(num(args.y, cur.posY))
       await store.applyOps([{ op: 'patch_clip', clipId, fx }], source, '变换')
       return result(name, '已改变换', [clipId])
     }
@@ -1060,7 +1071,7 @@ export async function runAction(
     case 'reset_fx': {
       const clipId = String(args.clipId || selectedOrFirst(p))
       await store.applyOps(
-        [{ op: 'patch_clip', clipId, fx: { speed: 1, filter: 'none', crop: null, rotate: 0, flipX: false, flipY: false, opacity: 1, scale: 1, posX: 0.5, posY: 0.5, fadeInMs: 0, fadeOutMs: 0, color: { exposure: 0, contrast: 0, saturation: 0, warmth: 0 }, transitionOut: { type: 'none', durationMs: 0 }, masks: [], effects: [], keys: {}, reverse: false, freeze: false, stabilize: { enabled: false, amount: 0.5 }, key: null, audioLink: null, denoise: null } }],
+        [{ op: 'patch_clip', clipId, fx: { speed: 1, filter: 'none', crop: null, rotate: 0, flipX: false, flipY: false, opacity: 1, scale: 1, scaleX: 1, scaleY: 1, posX: 0.5, posY: 0.5, fadeInMs: 0, fadeOutMs: 0, color: { exposure: 0, contrast: 0, saturation: 0, warmth: 0 }, transitionOut: { type: 'none', durationMs: 0 }, masks: [], effects: [], keys: {}, reverse: false, freeze: false, stabilize: { enabled: false, amount: 0.5 }, key: null, audioLink: null, denoise: null } }],
         source,
         '重置效果'
       )

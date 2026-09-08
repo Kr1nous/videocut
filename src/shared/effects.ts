@@ -208,7 +208,12 @@ export function applyEffectsCanvas(
       ctx.imageSmoothingEnabled = true
     } else if (e.type === 'grain') {
       const amt = numParam(e, 'amount', 10) / 100
-      const img = ctx.getImageData(0, 0, w, h)
+      let img: ImageData
+      try {
+        img = ctx.getImageData(0, 0, w, h)
+      } catch {
+        continue
+      }
       const d = img.data
       for (let i = 0; i < d.length; i += 4) {
         const n = (Math.random() * 2 - 1) * amt * 255
@@ -244,7 +249,12 @@ export function applyEffectsCanvas(
       }
       ctx.restore()
     } else if (e.type === 'lut' && lut) {
-      const img = ctx.getImageData(0, 0, w, h)
+      let img: ImageData
+      try {
+        img = ctx.getImageData(0, 0, w, h)
+      } catch {
+        continue
+      }
       applyLutToImageData(img.data, lut)
       ctx.putImageData(img, 0, 0)
     }

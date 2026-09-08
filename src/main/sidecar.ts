@@ -5,7 +5,7 @@ import { extname, join } from 'node:path'
 import { runAction } from './actions'
 import { runAgent } from './ai/agent'
 import { store } from './core'
-import { exportTimeline, renderFrame, saveThumbDataUrl } from './media'
+import { exportTimeline, probeAssetFile, renderFrame, saveThumbDataUrl } from './media'
 import { startMcpHttp, mcpStatus } from './mcp/http'
 import { mcpConfigSnippet } from './mcp/protocol'
 import { API_PORT, extraBinPath, userDataDir } from './paths'
@@ -34,7 +34,7 @@ function emit(event: string, data: unknown): void {
 
 function cors(res: http.ServerResponse): void {
   res.setHeader('Access-Control-Allow-Origin', '*')
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept')
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Range')
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
   res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Accept-Ranges, Content-Length')
 }
@@ -97,8 +97,8 @@ function serveFile(req: http.IncomingMessage, res: http.ServerResponse, filePath
   if (range) {
     const m = /bytes=(\d*)-(\d*)/.exec(range)
     const start = m?.[1] ? Number(m[1]) : 0
-    const end = m?.[2] ? Number(m[2]) : Math.min(start + 1024 * 1024 - 1, st.size - 1)
-    if (start >= st.size || end >= st.size || start > end) {
+    const end = m?.[2] ? Math.min(Number(m[2]), st.size - 1) : st.size - 1
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || start >= st.size || start > end) {
       res.writeHead(416, { 'Content-Range': `bytes */${st.size}` })
       res.end()
       return
@@ -213,6 +213,11 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
   if (path === '/media/delete' && method === 'POST') {
     const body = await json(req)
     sendJson(res, 200, await store.deleteAsset(String(body.assetId ?? '')))
+    return
+  }
+  if (path === '/media/probe' && method === 'POST') {
+    const body = await json(req)
+    sendJson(res, 200, await probeAssetFile(String(body.assetId ?? '')))
     return
   }
   if (path === '/media/updateMeta' && method === 'POST') {

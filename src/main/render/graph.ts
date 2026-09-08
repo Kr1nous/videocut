@@ -6,7 +6,7 @@ import { glowSigma, hasGlow, simpleEffectFfmpeg, xfadeName } from '../../shared/
 import { audioGlowFfmpeg, denoiseFfmpeg, volumeFilter } from '../../shared/audio'
 import { videoFilterFfmpeg } from '../../shared/fx'
 import { keyFfmpeg, stabilizeFfmpeg } from '../../shared/key'
-import { maskFfmpeg } from '../../shared/mask'
+import { axisScale, maskFfmpeg } from '../../shared/mask'
 import {
   type MediaAsset,
   type Project,
@@ -126,27 +126,15 @@ function placeOnCanvas(
   const mask = maskFfmpeg(fx)
   const dest = anim?.opacity ? `pl_${outLabel}` : outLabel
   const canvas = `color=c=${bg}:s=${width}x${height}:d=${durationS}:r=${fps},format=rgba[bg_${outLabel}]`
-  let scaled: string
-  let over: string
-  if (anim?.scale || anim?.posX || anim?.posY) {
-    const sc = anim.scale || Math.min(4, Math.max(0.05, fx.scale || 1)).toFixed(4)
-    const px = anim.posX || (fx.posX ?? 0.5).toFixed(4)
-    const py = anim.posY || (fx.posY ?? 0.5).toFixed(4)
-    scaled = `${srcLabel}scale=w='iw*max(${width}/iw\\,${height}/ih)*(${sc})':h='ih*max(${width}/iw\\,${height}/ih)*(${sc})':eval=frame,setsar=1${
-      mask ? `,${mask}` : ''
-    }[fg_${outLabel}]`
-    over = `[bg_${outLabel}][fg_${outLabel}]overlay=x='${width}*(${px})-overlay_w/2':y='${height}*(${py})-overlay_h/2':eval=frame:shortest=1:format=auto[${dest}]`
-  } else {
-    const scale = Math.min(4, Math.max(0.05, fx.scale || 1))
-    const boxW = even(width * scale)
-    const boxH = even(height * scale)
-    const x = Math.round(fx.posX * width - boxW / 2)
-    const y = Math.round(fx.posY * height - boxH / 2)
-    scaled = `${srcLabel}scale=${boxW}:${boxH}:force_original_aspect_ratio=increase,crop=${boxW}:${boxH},setsar=1${
-      mask ? `,${mask}` : ''
-    }[fg_${outLabel}]`
-    over = `[bg_${outLabel}][fg_${outLabel}]overlay=${x}:${y}:shortest=1:format=auto[${dest}]`
-  }
+  const ax = axisScale(fx)
+  const scX = anim?.scale || ax.x.toFixed(4)
+  const scY = anim?.scale || ax.y.toFixed(4)
+  const px = anim?.posX || (fx.posX ?? 0.5).toFixed(4)
+  const py = anim?.posY || (fx.posY ?? 0.5).toFixed(4)
+  const scaled = `${srcLabel}scale=w='iw*min(${width}/iw\\,${height}/ih)*(${scX})':h='ih*min(${width}/iw\\,${height}/ih)*(${scY})':eval=frame,setsar=1${
+    mask ? `,${mask}` : ''
+  }[fg_${outLabel}]`
+  const over = `[bg_${outLabel}][fg_${outLabel}]overlay=x='${width}*(${px})-overlay_w/2':y='${height}*(${py})-overlay_h/2':eval=frame:shortest=1:format=auto[${dest}]`
   const body = `${scaled};${canvas};${over}`
   if (!anim?.opacity) return body
   const op = anim.opacity

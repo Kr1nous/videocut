@@ -1,6 +1,36 @@
 import { fxAt } from './anim'
 import { clipBlend, clipFx, clipKind } from './types'
-import type { BlendMode, ClipFx, Timeline, TimelineClip } from './types'
+import type { AspectPreset, BlendMode, ClipFx, Project, ProjectSettings, Timeline, TimelineClip } from './types'
+
+export function evenDim(n: number): number {
+  const x = Math.max(2, Math.round(n))
+  return x % 2 === 0 ? x : x + 1
+}
+
+export function aspectFromSize(width: number, height: number): AspectPreset {
+  const r = width / Math.max(1, height)
+  if (Math.abs(r - 1) < 0.08) return '1:1'
+  if (r < 0.9) return '9:16'
+  return '16:9'
+}
+
+export function applySourceFrame(settings: ProjectSettings, width: number, height: number): boolean {
+  if (!width || !height) return false
+  const w = evenDim(width)
+  const h = evenDim(height)
+  if (settings.width === w && settings.height === h) return false
+  settings.width = w
+  settings.height = h
+  settings.aspect = aspectFromSize(w, h)
+  return true
+}
+
+export function shouldAdoptSourceFrame(project: Project): boolean {
+  if (project.settings.manualFrame) return false
+  const visuals = project.assets.filter((a) => a.kind === 'video' || a.kind === 'image')
+  if (visuals.length <= 1) return true
+  return !project.settings.width || (project.settings.width === 1920 && project.settings.height === 1080)
+}
 
 export function dissolveOverlapMs(clip: TimelineClip): number {
   const fx = clipFx(clip)
@@ -188,6 +218,5 @@ function prevClip(clips: TimelineClip[], clip: TimelineClip): TimelineClip | nul
 }
 
 export function even(n: number): number {
-  const x = Math.max(2, Math.round(n))
-  return x % 2 === 0 ? x : x + 1
+  return evenDim(n)
 }

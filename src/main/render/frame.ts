@@ -3,7 +3,7 @@ import { even, ffmpegBlendMode, layersAt } from '../../shared/compose'
 import { glowSigma, hasGlow, simpleEffectFfmpeg } from '../../shared/effects'
 import { videoFilterFfmpeg } from '../../shared/fx'
 import { keyFfmpeg } from '../../shared/key'
-import { maskFfmpeg } from '../../shared/mask'
+import { layerBox, maskFfmpeg } from '../../shared/mask'
 import { visibleText } from '../../shared/text'
 import type { Project } from '../../shared/types'
 import { findFfmpeg, findFfprobe, runFfmpeg } from './ffmpeg'
@@ -58,11 +58,13 @@ export async function renderFrame(project: Project, timeMs: number, preset = '10
       continue
     }
 
-    const scale = Math.min(4, Math.max(0.05, fx.scale || 1))
-    const boxW = even(width * scale)
-    const boxH = even(height * scale)
-    const x = Math.round(fx.posX * width - boxW / 2)
-    const y = Math.round(fx.posY * height - boxH / 2)
+    const srcW = project.assets.find((a) => a.id === layer.clip.assetId)?.width || 0
+    const srcH = project.assets.find((a) => a.id === layer.clip.assetId)?.height || 0
+    const box = layerBox(fx, width, height, srcW, srcH)
+    const boxW = even(box.w)
+    const boxH = even(box.h)
+    const x = Math.round(box.x)
+    const y = Math.round(box.y)
     const blend = layer.track === 'overlay' ? ffmpegBlendMode(layer.blend) : null
     let fg = `fg${step}`
 
@@ -129,8 +131,7 @@ export async function renderFrame(project: Project, timeMs: number, preset = '10
           ...simpleEffectFfmpeg(fx),
           ...keyFfmpeg(fx),
           hasGlow(fx) ? `gblur=sigma=${glowSigma(fx).toFixed(2)}` : null,
-          `scale=${boxW}:${boxH}:force_original_aspect_ratio=increase`,
-          `crop=${boxW}:${boxH}`,
+          `scale=${boxW}:${boxH}`,
           !blend && layer.opacity < 0.999 ? `colorchannelmixer=aa=${layer.opacity.toFixed(3)}` : null
         ])}[${fg}]`
       )

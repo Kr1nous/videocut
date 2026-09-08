@@ -9,8 +9,7 @@ import { SettingsModal } from './components/Settings'
 import { TerminalPanel } from './components/TerminalPanel'
 import { Inspector } from './components/Inspector'
 import { ToolTabs } from './components/ToolTabs'
-import { mediaUrl } from './lib/format'
-import { analyzeAsset } from './lib/analyze'
+
 
 type EditorState = {
   project: Project | null
@@ -36,6 +35,12 @@ export default function App() {
     () => window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false
   )
   const playRef = useRef({ playing: false, originWall: 0, originMs: 0 })
+  const stateRef = useRef(state)
+  stateRef.current = state
+  const playheadRef = useRef(playhead)
+  playheadRef.current = playhead
+  const selectedClipRef = useRef(selectedClip)
+  selectedClipRef.current = selectedClip
 
   const newProject = useCallback(async (preset?: string) => {
     try {
@@ -79,7 +84,7 @@ export default function App() {
     const assets = state?.project?.assets ?? []
     for (const asset of assets) {
       if (asset.kind !== 'video' && asset.kind !== 'audio') continue
-      if (asset.durationMs > 0 && asset.thumbPath) continue
+      if (asset.durationMs > 0 && (asset.kind === 'audio' || asset.thumbPath)) continue
       void probeAsset(asset)
     }
   }, [state?.project?.assets])
@@ -88,15 +93,20 @@ export default function App() {
     if (!playing) return
     playRef.current = { playing: true, originWall: performance.now(), originMs: playhead }
     let raf = 0
+    let lastUi = 0
     const tick = () => {
       const next = playRef.current.originMs + (performance.now() - playRef.current.originWall)
-      const dur = state?.project ? timelineDurationMs(state.project.timeline) : 0
+      const proj = stateRef.current?.project
+      const dur = proj ? timelineDurationMs(proj.timeline) : 0
       if (dur <= 0 || next >= dur) {
         setPlaying(false)
         setPlayhead(0)
         return
       }
-      setPlayhead(next)
+      if (lastUi === 0 || next - lastUi >= 50) {
+        lastUi = next
+        setPlayhead(next)
+      }
       raf = requestAnimationFrame(tick)
     }
     raf = requestAnimationFrame(tick)
@@ -135,6 +145,21 @@ export default function App() {
       }
       if (e.key === 's' && selectedClip) {
         void window.cut.applyOps([{ op: 'split_clip', clipId: selectedClip, atMs: playhead }], '分割')
+      }
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        const proj = stateRef.current?.project
+        const clipId = selectedClipRef.current
+        const clip = proj?.timeline.storyline.find((c) => c.id === clipId)
+        if (!proj || !clip) return
+        e.preventDefault()
+        const dur = timelineDurationMs(proj.timeline)
+        const next = Math.min(
+          dur,
+          Math.max(0, playheadRef.current + (e.key === 'ArrowLeft' ? -3000 : 3000))
+        )
+        playheadRef.current = next
+        setPlaying(false)
+        setPlayhead(next)
       }
     }
     window.addEventListener('keydown', onKey)
@@ -288,6 +313,7 @@ export default function App() {
             null
           }
           onAction={(name, args) => void runTool(name, args ?? {})}
+          onSelectClip={setSelectedClip}
         />
         <ReviewPanel
           project={project}
@@ -353,36 +379,18 @@ export default function App() {
   )
 }
 
+const probing = new Set<string>()
+
 async function probeAsset(asset: MediaAsset) {
-  const el = document.createElement(asset.kind === 'audio' ? 'audio' : 'video')
-  el.preload = 'metadata'
-  el.src = mediaUrl(asset.path)
-  await new Promise<void>((resolve) => {
-    el.onloadedmetadata = () => resolve()
-    el.onerror = () => resolve()
-  })
-  const durationMs = Math.round((el.duration || 0) * 1000)
-  const width = 'videoWidth' in el ? el.videoWidth : 0
-  const height = 'videoHeight' in el ? el.videoHeight : 0
-  await window.cut.updateAssetMeta(asset.id, { durationMs, width, height })
-  if (asset.kind === 'video' && durationMs > 0) {
-    el.currentTime = Math.min(1, (el.duration || 1) / 3)
-    await new Promise<void>((resolve) => {
-      el.onseeked = () => resolve()
-      el.onerror = () => resolve()
-    })
-    const canvas = document.createElement('canvas')
-    canvas.width = 320
-    canvas.height = Math.max(1, Math.round((320 * (height || 9)) / (width || 16)))
-    canvas.getContext('2d')?.drawImage(el, 0, 0, canvas.width, canvas.height)
-    await window.cut.saveThumb(asset.id, canvas.toDataURL('image/jpeg', 0.7))
-  }
-  if (!asset.index) {
-    try {
-      const index = await analyzeAsset({ ...asset, durationMs })
-      await window.cut.updateAssetMeta(asset.id, { index })
-    } catch {
-      /* analysis is best-effort */
+  if (probing.has(asset.id)) return
+  probing.add(asset.id)
+  try {
+    if (asset.durationMs <= 0 || (asset.kind === 'video' && !asset.thumbPath)) {
+      await window.cut.probeAsset(asset.id)
     }
+  } catch {
+    /* ffprobe / decode may fail for some codecs */
+  } finally {
+    probing.delete(asset.id)
   }
 }

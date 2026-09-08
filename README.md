@@ -1,9 +1,9 @@
-# 剪辑台 (videocut) 1.0
+# 剪辑台 (videocut) 1.1.0
 
 macOS 桌面剪辑软件（Tauri 2）。面向已经录制好的影片：人在界面里剪，AI 通过 **终端 CLI** 或 **MCP** 接管同一套工具。字幕走独立字幕轨。界面靠近 iMovie / After Effects 的简洁面板，而不是 Premiere 面板墙。
 
 仓库：https://github.com/Kr1nous/videocut  
-安装包：见 [Releases](https://github.com/Kr1nous/videocut/releases) 里的 [`CutStudio_1.0.0_aarch64.dmg`](https://github.com/Kr1nous/videocut/releases/download/v1.0.0/CutStudio_1.0.0_aarch64.dmg)（Apple Silicon）。安装后应用名叫「剪辑台」。
+安装包：见 [Releases](https://github.com/Kr1nous/videocut/releases) 里的 [`CutStudio_1.1.0_aarch64.dmg`](https://github.com/Kr1nous/videocut/releases/download/v1.1.0/CutStudio_1.1.0_aarch64.dmg)（Apple Silicon）。安装后应用名叫「剪辑台」。
 
 ## 运行
 
@@ -126,3 +126,7 @@ src/renderer/         界面
   }
 }
 ```
+
+## Contributors
+
+- [Kr1nous](https://github.com/Kr1nous)
